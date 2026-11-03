@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+self=$0
+while [ -L "$self" ]; do
+    directory=$(cd -P "$(dirname "$self")" && pwd)
+    self=$(readlink "$self")
+    case "$self" in /*) ;; *) self=$directory/$self ;; esac
+done
+directory=$(cd -P "$(dirname "$self")/.." && pwd)
+for python in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 python3; do
+    if command -v "$python" >/dev/null 2>&1; then
+        exec "$python" "$directory/lib/vpn_pin.py" "$@"
+    fi
+done
+echo 'vpn-pin: Python 3.9 or newer is required' >&2
+exit 1

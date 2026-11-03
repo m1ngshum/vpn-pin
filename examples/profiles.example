@@ -1,0 +1,3 @@
+# name | absolute private .ovpn path | comma-separated hostnames/IPv4 | optional kube context | optional aws-vault profile
+development|~/vpn/development.ovpn|api.dev.example.test,192.0.2.10||
+production|~/vpn/production.ovpn||production|production-readonly

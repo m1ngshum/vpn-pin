@@ -1,0 +1,16 @@
+# Private client configs, certificates, credentials, and generated runtime files.
+*.ovpn
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.conf
+.env
+.env.*
+*.log
+*.pid
+__pycache__/
+.DS_Store
+FORK_REPORT.md
+SANITIZATION_REPORT.md
