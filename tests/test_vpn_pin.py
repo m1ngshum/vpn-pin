@@ -236,6 +236,17 @@ class StateAndProcess(unittest.TestCase):
         with patch.object(vpn, "run", return_value="destination: 192.0.2.1\nflags: <UP,HOST,DONE>\ninterface: utun42"):
             self.assertEqual(vpn.exact_route("192.0.2.1"), "utun42")
 
+    def test_cloned_host_fallback_is_not_an_explicit_host_route(self):
+        output = "destination: 192.0.2.1\ngateway: 192.0.2.254\ninterface: utun9\nflags: <UP,GATEWAY,HOST,DONE,WASCLONED,IFSCOPE,IFREF,GLOBAL>"
+        with patch.object(vpn, "run", return_value=output):
+            self.assertIsNone(vpn.exact_route("192.0.2.1"))
+
+    def test_static_scoped_host_route_remains_a_conflict(self):
+        output = "destination: 192.0.2.1\ninterface: utun9\nflags: <UP,HOST,DONE,STATIC,IFSCOPE>"
+        profile = vpn.Profile("work", Path("/fixture/client.ovpn"), ["192.0.2.1"], "", "")
+        with patch.object(vpn, "run", return_value=output):
+            self.assertEqual(vpn.route_plan(profile, None)["conflicts"], {"192.0.2.1": "utun9"})
+
     def test_pending_startup_cannot_pin_routes(self):
         profile = vpn.Profile("work", Path("/client.ovpn"), ["192.0.2.1"], "", "")
         with patch.object(vpn, "add_route") as add, self.assertRaisesRegex(vpn.Error, "unfinished startup"):
