@@ -32,7 +32,7 @@ def build_release(repo, revision, output):
     output.mkdir(parents=True, exist_ok=True)
     tar = git(repo, "archive", "--format=tar", "--prefix=vpn-pin-" + version + "/", commit, "--", *paths)
     with (output / archive).open("wb") as raw:
-        with gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as compressed:
+        with gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0, compresslevel=9) as compressed:
             compressed.write(tar)
     digest = hashlib.sha256((output / archive).read_bytes()).hexdigest()
     formula = '''class VpnPin < Formula

@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from build_release import build_release
@@ -37,7 +38,11 @@ class Release(unittest.TestCase):
             (repo / "private.key").write_text("untracked fixture must not be packaged")
             first, second = root / "first", root / "second"
             commit, version = build_release(repo, "HEAD", first)
-            build_release(repo, commit, second)
+            original = gzip.GzipFile
+            def changed_default(*args, compresslevel=1, **kwargs):
+                return original(*args, compresslevel=compresslevel, **kwargs)
+            with patch("build_release.gzip.GzipFile", side_effect=changed_default):
+                build_release(repo, commit, second)
             self.assertEqual(version, expected_version)
             for path in first.iterdir():
                 self.assertEqual(path.read_bytes(), (second / path.name).read_bytes())
