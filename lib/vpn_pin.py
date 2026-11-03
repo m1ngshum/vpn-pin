@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import ipaddress
 import json
 import os
@@ -343,10 +344,40 @@ def require_interface(state):
         raise Error("tunnel interface identity changed; inspect before recovery")
 
 
+def log_snapshot(path):
+    private_file(path)
+    with path.open("rb") as source:
+        info = os.fstat(source.fileno())
+        data = source.read(4 * 1024 * 1024 + 1)
+    # shortcut: stop at 4 MiB; add bounded streaming continuity checks if long sessions need larger logs.
+    if len(data) > 4 * 1024 * 1024:
+        raise Error("tunnel log exceeds continuity-check limit; inspect and restart explicitly")
+    return data, {"device": info.st_dev, "inode": info.st_ino, "size": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def require_lifetime(directory, name, state):
+    require_interface(state)
+    guard = state.get("log_guard")
+    if not isinstance(guard, dict):
+        raise Error("log continuity unavailable; stop with the previous version or inspect legacy state manually")
+    data, current = log_snapshot(directory / (name + ".log"))
+    try:
+        size = guard["size"]
+        if (type(size) is not int or size < 0 or size > len(data)
+                or any(current[key] != guard[key] for key in ("device", "inode"))
+                or hashlib.sha256(data[:size]).hexdigest() != guard["sha256"]):
+            raise Error("tunnel log was replaced or reset; inspect before recovery")
+    except (KeyError, TypeError) as error:
+        raise Error("invalid tunnel log continuity record") from error
+    if re.search(rb"Opened utun device|Closing TUN/TAP interface|SIGHUP|SIGTERM|SIGINT", data[size:]):
+        raise Error("tunnel lifecycle changed; inspect before recovery")
+
+
 def pin_routes(directory, profile, state, desired=None):
     if not isinstance(state["utun"], str) or not re.fullmatch(r"utun[0-9]+", state["utun"]):
         raise Error(profile.name + " has unfinished startup state; run down before retrying")
-    require_interface(state)
+    require_lifetime(directory, profile.name, state)
     plan = route_plan(profile, state, desired)
     desired = plan["desired"]
     previous = list(state["routes"])
@@ -359,7 +390,7 @@ def pin_routes(directory, profile, state, desired=None):
     save_state(directory, profile.name, dict(state, pending_routes=sorted(set(previous + desired))))
     try:
         for ip in plan["add"]:
-            require_interface(state)
+            require_lifetime(directory, profile.name, state)
             if exact_route(ip) is not None:
                 raise Error("route changed after planning: " + ip)
             inflight = ip
@@ -367,7 +398,7 @@ def pin_routes(directory, profile, state, desired=None):
             added.append(ip)
             inflight = None
         for ip in plan["remove"]:
-            require_interface(state)
+            require_lifetime(directory, profile.name, state)
             remove_route(ip, interface)
             removed.append(ip)
         if any(exact_route(ip) != interface for ip in desired):
@@ -378,13 +409,13 @@ def pin_routes(directory, profile, state, desired=None):
         failures = []
         for ip in added:
             try:
-                require_interface(state)
+                require_lifetime(directory, profile.name, state)
                 remove_route(ip, interface)
             except (Error, OSError) as rollback:
                 failures.append(str(rollback))
         for ip in removed:
             try:
-                require_interface(state)
+                require_lifetime(directory, profile.name, state)
                 add_route(ip, interface)
             except (Error, OSError) as rollback:
                 failures.append(str(rollback))
@@ -442,7 +473,7 @@ def up(directory, profile):
             path.unlink()
     binary = executable("openvpn")
     run([binary, "--cd", profile.ovpn.parent, "--config", config,
-         "--log", log, "--writepid", pidfile, "--connect-timeout", "20", "--verb", "3", "--daemon"])
+         "--log-append", log, "--writepid", pidfile, "--connect-timeout", "20", "--verb", "3", "--daemon"])
     state = None
     for _ in range(30):
         if state is None and pidfile.exists():
@@ -452,10 +483,10 @@ def up(directory, profile):
             if owns_process(directory, profile.name, pending):
                 state = pending
                 save_state(directory, profile.name, state)
-        if log.exists():
-            private_file(log)
-        text = log.read_text(errors="replace") if log.exists() else ""
-        if "Initialization Sequence Completed" in text:
+        data, guard = log_snapshot(log) if log.exists() else (b"", None)
+        text = data.decode(errors="replace")
+        lifecycle = max(text.rfind(event) for event in ("Opened utun device", "Closing TUN/TAP interface", "SIGHUP"))
+        if text.rfind("Initialization Sequence Completed") > lifecycle:
             break
         time.sleep(1)
     else:
@@ -468,7 +499,7 @@ def up(directory, profile):
     private_file(pidfile)
     pid = int(pidfile.read_text().strip())
     state = {"pid": pid, "binary": binary, "started": process_value(pid, "lstart"),
-             "utun": interfaces[-1], "ifindex": socket.if_nametoindex(interfaces[-1]), "routes": []}
+             "utun": interfaces[-1], "ifindex": socket.if_nametoindex(interfaces[-1]), "log_guard": guard, "routes": []}
     if not owns_process(directory, profile.name, state):
         raise Error("OpenVPN process identity did not match; refusing route changes")
     save_state(directory, profile.name, state)
@@ -486,9 +517,9 @@ def down(directory, name):
         print(name + " stale state cleared; no process killed")
         return
     if state["routes"]:
-        require_interface(state)
+        require_lifetime(directory, name, state)
     for ip in list(state["routes"]):
-        require_interface(state)
+        require_lifetime(directory, name, state)
         remove_route(ip, state["utun"])
         state["routes"].remove(ip)
         save_state(directory, name, state)
@@ -526,7 +557,7 @@ def show_plan(directory, profile):
     if state and not running:
         raise Error(profile.name + ": stale process state; inspect before planning changes")
     if running and state["utun"] is not None:
-        require_interface(state)
+        require_lifetime(directory, profile.name, state)
     plan = route_plan(profile, state)
     print(profile.name + ": snapshot only; " + ("tunnel " + str(state["utun"]) if running else "start the tunnel before applying routes"))
     for ip in plan["desired"]:
@@ -568,7 +599,7 @@ def doctor(config, name=None, port=None):
         running = state is not None and owns_process(directory, profile.name, state)
         if running and state["utun"] is not None:
             try:
-                require_interface(state)
+                require_lifetime(directory, profile.name, state)
             except Error as error:
                 problems.append(profile.name + ": " + str(error))
                 running = False
@@ -600,12 +631,12 @@ def doctor(config, name=None, port=None):
 
 def watch(config, name, interval):
     delay = interval
-    identity = lambda state: tuple(state.get(key) for key in ("pid", "started", "binary", "utun", "ifindex"))
+    identity = lambda state: tuple(state.get(key) for key in ("pid", "started", "binary", "utun", "ifindex", "log_guard"))
     with state_directory(human().pw_uid) as directory:
         initial = read_state(directory, name)
         if not initial or not owns_process(directory, name, initial) or initial["utun"] is None:
             raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
-        require_interface(initial)
+        require_lifetime(directory, name, initial)
         expected = identity(initial)
     print("Watching " + name + "; Ctrl-C stops watching and leaves the tunnel running", flush=True)
     while True:
@@ -626,7 +657,7 @@ def watch(config, name, interval):
                 raise Error("watched tunnel changed; restart watch explicitly after inspection")
             if not owns_process(directory, name, state):
                 raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
-            require_interface(state)
+            require_lifetime(directory, name, state)
             plan = route_plan(profile, state, desired)
             if plan["add"] or plan["remove"] or plan["conflicts"]:
                 if not owns_process(directory, name, state):

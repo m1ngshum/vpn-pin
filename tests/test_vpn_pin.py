@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -69,12 +70,16 @@ class Routes(unittest.TestCase):
     def setUp(self):
         self.profile = vpn.Profile("work", Path("/client.ovpn"), [], "", "")
         self.state = {"pid": 123, "started": "start", "utun": "utun42", "ifindex": 42, "routes": ["192.0.2.3"]}
+        log = b"fixture initial log\n"
+        guard = {"device": 1, "inode": 2, "size": len(log), "sha256": hashlib.sha256(log).hexdigest()}
+        self.state["log_guard"] = guard
         self.routes = {"192.0.2.3": "utun42"}
         self.saved = []
         self.calls = []
         self.fail_add = set()
         self.fail_remove = set()
         patches = [patch.object(vpn.socket, "if_nametoindex", return_value=42),
+                   patch.object(vpn, "log_snapshot", return_value=(log, guard)),
                    patch.object(vpn, "resolve_ips", return_value=["192.0.2.1", "192.0.2.2"]),
                    patch.object(vpn, "exact_route", side_effect=lambda ip: self.routes.get(ip)),
                    patch.object(vpn, "add_route", side_effect=self.add),
@@ -339,6 +344,24 @@ class StateAndProcess(unittest.TestCase):
                     patch.object(vpn, "save_state"), patch.object(vpn, "process_value", return_value="started"), \
                     patch.object(vpn, "owns_process", return_value=True), patch.object(vpn.time, "sleep"), \
                     patch.object(vpn.os, "kill") as kill, patch.object(Path, "unlink"), self.assertRaises(vpn.Error):
+                vpn.up(root, profile)
+            kill.assert_called_once_with(123, signal.SIGTERM)
+
+    def test_startup_does_not_accept_initialization_from_before_a_reopen(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = vpn.Profile("work", Path("/client.ovpn"), ["192.0.2.1"], "", "")
+            def launch(args):
+                self.assertIn("--log-append", args)
+                (root / "work.pid").write_text("123")
+                (root / "work.log").write_text("Opened utun device utun42\nInitialization Sequence Completed\nSIGHUP received\nOpened utun device utun42\n")
+            with patch.object(vpn, "read_state", return_value=None), patch.object(vpn, "resolve_ips"), \
+                    patch.object(vpn, "wrapper", return_value=root / "work.conf"), \
+                    patch.object(vpn, "executable", return_value="/stub/openvpn"), patch.object(vpn, "run", side_effect=launch), \
+                    patch.object(vpn, "private_file"), patch.object(vpn, "save_state"), \
+                    patch.object(vpn, "process_value", return_value="started"), patch.object(vpn, "owns_process", return_value=True), \
+                    patch.object(vpn.time, "sleep"), patch.object(vpn.os, "kill") as kill, \
+                    self.assertRaisesRegex(vpn.Error, "did not initialize"):
                 vpn.up(root, profile)
             kill.assert_called_once_with(123, signal.SIGTERM)
 

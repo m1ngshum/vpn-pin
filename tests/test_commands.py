@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,12 @@ class Commands(unittest.TestCase):
     def setUp(self):
         self.profile = vpn.Profile("work", Path("/fixture/client.ovpn"), ["192.0.2.1"], "", "")
         self.state = {"pid": 123, "binary": "/fixture/openvpn", "started": "started", "utun": "utun42", "ifindex": 42, "routes": ["192.0.2.2"]}
+        self.log = b"fixture initial log\n"
+        self.guard = {"device": 1, "inode": 2, "size": len(self.log), "sha256": hashlib.sha256(self.log).hexdigest()}
+        self.state["log_guard"] = self.guard
+        snapshot = patch.object(vpn, "log_snapshot", return_value=(self.log, self.guard))
+        snapshot.start()
+        self.addCleanup(snapshot.stop)
         interface = patch.object(vpn.socket, "if_nametoindex", return_value=42)
         interface.start()
         self.addCleanup(interface.stop)
@@ -128,6 +135,31 @@ class Commands(unittest.TestCase):
                 patch.object(vpn, "resolve_ips") as resolve, self.assertRaisesRegex(vpn.Error, "owned tunnel"):
             vpn.watch(Path("/config"), "work", 5)
         resolve.assert_not_called()
+
+    def test_watch_rejects_recreation_even_when_pid_name_and_index_are_reused(self):
+        @contextlib.contextmanager
+        def directory(uid):
+            yield Path("/state")
+        reopened = self.log + b"SIGHUP received\nClosing TUN/TAP interface\nOpened utun device utun42\n"
+        with patch.object(vpn, "load_profiles", return_value={"work": self.profile}), \
+                patch.object(vpn, "resolve_ips", return_value=["192.0.2.1"]), patch.object(vpn, "state_directory", side_effect=directory), \
+                patch.object(vpn, "read_state", return_value=self.state), patch.object(vpn, "owns_process", return_value=True), \
+                patch.object(vpn, "log_snapshot", side_effect=[(self.log, self.guard), (reopened, self.guard)]), \
+                patch.object(vpn, "pin_routes") as pin, self.assertRaisesRegex(vpn.Error, "lifecycle changed"):
+            vpn.watch(Path("/config"), "work", 5)
+        pin.assert_not_called()
+
+    def test_log_continuity_rejects_rotation_truncation_and_prefix_rewrite(self):
+        for data, guard in [(b"", self.guard), (b"rewritten log\n", self.guard),
+                            (self.log, dict(self.guard, inode=99))]:
+            with self.subTest(data=data, guard=guard), patch.object(vpn, "log_snapshot", return_value=(data, guard)), \
+                    self.assertRaisesRegex(vpn.Error, "replaced or reset"):
+                vpn.require_lifetime(Path("/state"), "work", self.state)
+
+    def test_persistent_tunnel_soft_reconnect_keeps_continuity(self):
+        data = self.log + b"SIGUSR1[soft,ping-restart] received, process restarting\n"
+        with patch.object(vpn, "log_snapshot", return_value=(data, self.guard)):
+            vpn.require_lifetime(Path("/state"), "work", self.state)
 
     def test_dns_subprocess_is_bounded_and_failure_is_retryable(self):
         result = subprocess.CompletedProcess([], 0, '["192.0.2.1"]', "")
