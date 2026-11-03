@@ -68,13 +68,14 @@ class Profiles(unittest.TestCase):
 class Routes(unittest.TestCase):
     def setUp(self):
         self.profile = vpn.Profile("work", Path("/client.ovpn"), [], "", "")
-        self.state = {"pid": 123, "started": "start", "utun": "utun42", "routes": ["192.0.2.3"]}
+        self.state = {"pid": 123, "started": "start", "utun": "utun42", "ifindex": 42, "routes": ["192.0.2.3"]}
         self.routes = {"192.0.2.3": "utun42"}
         self.saved = []
         self.calls = []
         self.fail_add = set()
         self.fail_remove = set()
-        patches = [patch.object(vpn, "resolve_ips", return_value=["192.0.2.1", "192.0.2.2"]),
+        patches = [patch.object(vpn.socket, "if_nametoindex", return_value=42),
+                   patch.object(vpn, "resolve_ips", return_value=["192.0.2.1", "192.0.2.2"]),
                    patch.object(vpn, "exact_route", side_effect=lambda ip: self.routes.get(ip)),
                    patch.object(vpn, "add_route", side_effect=self.add),
                    patch.object(vpn, "remove_route", side_effect=self.remove),
@@ -144,10 +145,10 @@ class Routes(unittest.TestCase):
             self.assertEqual(self.saved[0]["pending_routes"], ["192.0.2.1", "192.0.2.2", "192.0.2.3"])
             self.add(ip, interface)
             raise KeyboardInterrupt()
-        with patch.object(vpn, "add_route", side_effect=interrupted), self.assertRaisesRegex(vpn.Error, "retained for cleanup"):
+        with patch.object(vpn, "add_route", side_effect=interrupted), self.assertRaisesRegex(vpn.Error, "unfinished journal"):
             self.pin()
-        self.assertEqual(self.saved[-1]["routes"], sorted(self.routes))
-        self.assertIn("192.0.2.1", self.saved[-1]["routes"])
+        self.assertIn("192.0.2.1", self.saved[-1]["pending_routes"])
+        self.assertNotIn("192.0.2.1", self.saved[-1]["routes"])
 
     def test_final_state_write_failure_restores_previous_routes(self):
         attempts = []
@@ -180,13 +181,19 @@ class Routes(unittest.TestCase):
             if ip == "192.0.2.1":
                 reads.append(ip)
                 if len(reads) > 1:
-                    self.routes[ip] = "utun9"
+                    self.routes[ip] = "utun42"
             return self.routes.get(ip)
         with patch.object(vpn, "exact_route", side_effect=route), self.assertRaisesRegex(vpn.Error, "changed after planning"):
             self.pin()
         self.assertFalse(self.calls)
-        self.assertEqual(self.routes["192.0.2.1"], "utun9")
+        self.assertEqual(self.routes["192.0.2.1"], "utun42")
         self.assertNotIn("192.0.2.1", self.saved[-1]["routes"])
+
+    def test_interface_generation_change_before_add_leaves_routes_untouched(self):
+        with patch.object(vpn.socket, "if_nametoindex", side_effect=[42, 99]), self.assertRaisesRegex(vpn.Error, "interface identity changed"):
+            self.pin()
+        self.assertFalse(self.calls)
+        self.assertEqual(self.routes, {"192.0.2.3": "utun42"})
 
 
 class StateAndProcess(unittest.TestCase):
@@ -292,6 +299,7 @@ class StateAndProcess(unittest.TestCase):
                     patch.object(vpn, "executable", return_value="/stub/openvpn"), patch.object(vpn, "run", side_effect=launch), \
                     patch.object(vpn, "private_file"), patch.object(vpn, "save_state", side_effect=save), \
                     patch.object(vpn, "process_value", side_effect=lambda pid, field: values[field]), \
+                    patch.object(vpn.socket, "if_nametoindex", return_value=42), \
                     patch.object(vpn, "pin_routes"), contextlib.redirect_stdout(io.StringIO()):
                 vpn.up(root, profile)
             self.assertEqual(saved[-1]["utun"], "utun42")

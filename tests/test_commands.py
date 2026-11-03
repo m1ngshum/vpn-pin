@@ -16,7 +16,10 @@ import vpn_pin as vpn
 class Commands(unittest.TestCase):
     def setUp(self):
         self.profile = vpn.Profile("work", Path("/fixture/client.ovpn"), ["192.0.2.1"], "", "")
-        self.state = {"pid": 123, "binary": "/fixture/openvpn", "started": "started", "utun": "utun42", "routes": ["192.0.2.2"]}
+        self.state = {"pid": 123, "binary": "/fixture/openvpn", "started": "started", "utun": "utun42", "ifindex": 42, "routes": ["192.0.2.2"]}
+        interface = patch.object(vpn.socket, "if_nametoindex", return_value=42)
+        interface.start()
+        self.addCleanup(interface.stop)
         self.output = io.StringIO()
         self.redirect = contextlib.redirect_stdout(self.output)
         self.redirect.__enter__()
@@ -63,18 +66,22 @@ class Commands(unittest.TestCase):
                 patch.object(vpn, "exact_route", return_value=None), patch.object(vpn, "pin_routes") as pin, \
                 patch.object(vpn.time, "sleep", side_effect=sleep), self.assertRaises(KeyboardInterrupt):
             vpn.watch(Path("/config"), "work", 5)
-        self.assertEqual(read.call_count, 2)
+        self.assertEqual(read.call_count, 3)
         self.assertEqual(pin.call_count, 2)
 
     def test_watch_dns_failure_preserves_routes_and_backs_off_without_lock(self):
-        with patch.object(vpn, "load_profiles", return_value={"work": self.profile}), \
+        @contextlib.contextmanager
+        def state_directory(uid):
+            yield Path("/state")
+        with patch.object(vpn, "read_state", return_value=self.state), patch.object(vpn, "owns_process", return_value=True), \
+                patch.object(vpn, "load_profiles", return_value={"work": self.profile}), \
                 patch.object(vpn, "resolve_ips", side_effect=vpn.ResolutionError("DNS unavailable")), \
-                patch.object(vpn, "state_directory") as directory, patch.object(vpn, "pin_routes") as pin, \
+                patch.object(vpn, "state_directory", side_effect=state_directory) as directory, patch.object(vpn, "pin_routes") as pin, \
                 patch.object(vpn.time, "sleep", side_effect=[None, None, KeyboardInterrupt()]) as sleep, \
                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(KeyboardInterrupt):
             vpn.watch(Path("/config"), "work", 30)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [30, 60, 120])
-        directory.assert_not_called()
+        self.assertEqual(directory.call_count, 1)
         pin.assert_not_called()
 
     def test_watch_stops_when_process_identity_is_stale(self):
@@ -87,6 +94,40 @@ class Commands(unittest.TestCase):
                 patch.object(vpn, "pin_routes") as pin, self.assertRaisesRegex(vpn.Error, "owned tunnel"):
             vpn.watch(Path("/config"), "work", 5)
         pin.assert_not_called()
+
+    def test_watch_rejects_replacement_process_instead_of_adopting_it(self):
+        @contextlib.contextmanager
+        def directory(uid):
+            yield Path("/state")
+        replacement = dict(self.state, pid=456, started="replacement")
+        with patch.object(vpn, "load_profiles", return_value={"work": self.profile}), \
+                patch.object(vpn, "resolve_ips", return_value=["192.0.2.1"]), patch.object(vpn, "state_directory", side_effect=directory), \
+                patch.object(vpn, "read_state", side_effect=[self.state, self.state, replacement]), patch.object(vpn, "owns_process", return_value=True), \
+                patch.object(vpn, "exact_route", return_value=None), patch.object(vpn, "pin_routes") as pin, \
+                patch.object(vpn.time, "sleep"), self.assertRaisesRegex(vpn.Error, "tunnel changed"):
+            vpn.watch(Path("/config"), "work", 5)
+        self.assertEqual(pin.call_count, 1)
+
+    def test_watch_rejects_same_name_interface_recreation(self):
+        @contextlib.contextmanager
+        def directory(uid):
+            yield Path("/state")
+        with patch.object(vpn, "load_profiles", return_value={"work": self.profile}), \
+                patch.object(vpn, "resolve_ips", return_value=["192.0.2.1"]), patch.object(vpn, "state_directory", side_effect=directory), \
+                patch.object(vpn, "read_state", return_value=self.state), patch.object(vpn, "owns_process", return_value=True), \
+                patch.object(vpn.socket, "if_nametoindex", side_effect=[42, 99]), \
+                patch.object(vpn, "pin_routes") as pin, self.assertRaisesRegex(vpn.Error, "interface identity changed"):
+            vpn.watch(Path("/config"), "work", 5)
+        pin.assert_not_called()
+
+    def test_watch_checks_initial_identity_before_retrying_dns(self):
+        @contextlib.contextmanager
+        def directory(uid):
+            yield Path("/state")
+        with patch.object(vpn, "state_directory", side_effect=directory), patch.object(vpn, "read_state", return_value=None), \
+                patch.object(vpn, "resolve_ips") as resolve, self.assertRaisesRegex(vpn.Error, "owned tunnel"):
+            vpn.watch(Path("/config"), "work", 5)
+        resolve.assert_not_called()
 
     def test_dns_subprocess_is_bounded_and_failure_is_retryable(self):
         result = subprocess.CompletedProcess([], 0, '["192.0.2.1"]', "")

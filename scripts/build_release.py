@@ -18,7 +18,7 @@ def build_release(repo, revision, output):
     version = git(repo, "show", commit + ":VERSION").decode().strip()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?", version):
         raise ValueError("VERSION must be a numeric release version, optionally followed by -rc.N")
-    paths = ["bin", "lib", "docs", "VERSION", "setup.sh", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md"]
+    paths = ["bin", "lib", "docs", "examples", "VERSION", "setup.sh", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md"]
     entries = git(repo, "ls-tree", "-rz", commit, "--", *paths).split(b"\0")
     names = set()
     for entry in filter(None, entries):
@@ -26,7 +26,7 @@ def build_release(repo, revision, output):
         if metadata.split()[0] not in (b"100644", b"100755"):
             raise ValueError("release files must be regular files")
         names.add(name.decode())
-    if not {"bin/vpn-pin", "lib/vpn_pin.py", "VERSION", "setup.sh", "README.md", "LICENSE"} <= names:
+    if not {"bin/vpn-pin", "lib/vpn_pin.py", "examples/profiles.example", "VERSION", "setup.sh", "README.md", "LICENSE"} <= names:
         raise ValueError("release is missing required runtime files")
     archive = "vpn-pin-" + version + ".tar.gz"
     output.mkdir(parents=True, exist_ok=True)

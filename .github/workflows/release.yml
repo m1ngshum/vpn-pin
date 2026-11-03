@@ -22,6 +22,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(cat VERSION)
-          gh release create "v$version" --target "$GITHUB_SHA" --draft \
-            --title "vpn-pin $version" --notes-file docs/RELEASE_NOTES.md dist/*
+          python3 scripts/create_draft.py --repo "$GITHUB_REPOSITORY" \
+            --commit "$GITHUB_SHA" --directory dist

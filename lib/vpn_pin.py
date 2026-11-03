@@ -257,6 +257,8 @@ def read_state(directory, name):
                         or isinstance(state["utun"], str) and re.fullmatch(r"utun[0-9]+", state["utun"]))
                 or not isinstance(state["started"], str)):
             raise ValueError("invalid process identity")
+        if "ifindex" in state and (type(state["ifindex"]) is not int or state["ifindex"] <= 0):
+            raise ValueError("invalid interface identity")
         for ip in state["routes"]:
             if str(ipaddress.IPv4Address(ip)) != ip:
                 raise ValueError("invalid route")
@@ -330,26 +332,42 @@ def route_plan(profile, state, desired=None):
             "conflicts": conflicts}
 
 
+def require_interface(state):
+    if not state.get("ifindex"):
+        raise Error("interface identity unavailable; stop with the previous version or inspect legacy state manually")
+    try:
+        current = socket.if_nametoindex(state["utun"])
+    except OSError as error:
+        raise Error("tunnel interface disappeared; inspect before recovery") from error
+    if current != state["ifindex"]:
+        raise Error("tunnel interface identity changed; inspect before recovery")
+
+
 def pin_routes(directory, profile, state, desired=None):
     if not isinstance(state["utun"], str) or not re.fullmatch(r"utun[0-9]+", state["utun"]):
         raise Error(profile.name + " has unfinished startup state; run down before retrying")
+    require_interface(state)
     plan = route_plan(profile, state, desired)
     desired = plan["desired"]
     previous = list(state["routes"])
     interface = state["utun"]
     if plan["conflicts"]:
         raise Error("exact host route conflict: " + ", ".join(ip + " via " + interface for ip, interface in plan["conflicts"].items()))
-    added, removed = [], []
+    added, removed, inflight = [], [], None
     original = {ip for ip in previous if exact_route(ip) == interface}
     # Record intent first so an interrupted command never loses the possible route set.
     save_state(directory, profile.name, dict(state, pending_routes=sorted(set(previous + desired))))
     try:
         for ip in plan["add"]:
+            require_interface(state)
             if exact_route(ip) is not None:
                 raise Error("route changed after planning: " + ip)
+            inflight = ip
             add_route(ip, interface)
             added.append(ip)
+            inflight = None
         for ip in plan["remove"]:
+            require_interface(state)
             remove_route(ip, interface)
             removed.append(ip)
         if any(exact_route(ip) != interface for ip in desired):
@@ -360,15 +378,19 @@ def pin_routes(directory, profile, state, desired=None):
         failures = []
         for ip in added:
             try:
+                require_interface(state)
                 remove_route(ip, interface)
             except (Error, OSError) as rollback:
                 failures.append(str(rollback))
         for ip in removed:
             try:
+                require_interface(state)
                 add_route(ip, interface)
             except (Error, OSError) as rollback:
                 failures.append(str(rollback))
-        state["routes"] = sorted(ip for ip in set(previous + desired) if exact_route(ip) == interface)
+        if inflight is not None and exact_route(inflight) is not None:
+            raise Error("route command outcome is uncertain; inspect unfinished journal before manual recovery: " + str(state_path(directory, profile.name))) from error
+        state["routes"] = sorted(ip for ip in set(previous + added) if exact_route(ip) == interface)
         if set(state["routes"]) != original:
             failures.append("changed routes retained for cleanup")
         try:
@@ -446,7 +468,7 @@ def up(directory, profile):
     private_file(pidfile)
     pid = int(pidfile.read_text().strip())
     state = {"pid": pid, "binary": binary, "started": process_value(pid, "lstart"),
-             "utun": interfaces[-1], "routes": []}
+             "utun": interfaces[-1], "ifindex": socket.if_nametoindex(interfaces[-1]), "routes": []}
     if not owns_process(directory, profile.name, state):
         raise Error("OpenVPN process identity did not match; refusing route changes")
     save_state(directory, profile.name, state)
@@ -463,7 +485,10 @@ def down(directory, name):
         clean_stale(directory, name, state)
         print(name + " stale state cleared; no process killed")
         return
+    if state["routes"]:
+        require_interface(state)
     for ip in list(state["routes"]):
+        require_interface(state)
         remove_route(ip, state["utun"])
         state["routes"].remove(ip)
         save_state(directory, name, state)
@@ -500,6 +525,8 @@ def show_plan(directory, profile):
     running = state is not None and owns_process(directory, profile.name, state)
     if state and not running:
         raise Error(profile.name + ": stale process state; inspect before planning changes")
+    if running and state["utun"] is not None:
+        require_interface(state)
     plan = route_plan(profile, state)
     print(profile.name + ": snapshot only; " + ("tunnel " + str(state["utun"]) if running else "start the tunnel before applying routes"))
     for ip in plan["desired"]:
@@ -539,6 +566,12 @@ def doctor(config, name=None, port=None):
             problems.append(profile.name + ": OpenVPN configuration file missing")
         state = read_state(directory, profile.name) if directory else None
         running = state is not None and owns_process(directory, profile.name, state)
+        if running and state["utun"] is not None:
+            try:
+                require_interface(state)
+            except Error as error:
+                problems.append(profile.name + ": " + str(error))
+                running = False
         print("  tunnel: " + ("up on " + str(state["utun"]) if running else "stale" if state else "not running" if os.geteuid() == 0 else "run with sudo for process/route ownership checks"))
         try:
             ips = resolve_ips(profile)
@@ -567,6 +600,13 @@ def doctor(config, name=None, port=None):
 
 def watch(config, name, interval):
     delay = interval
+    identity = lambda state: tuple(state.get(key) for key in ("pid", "started", "binary", "utun", "ifindex"))
+    with state_directory(human().pw_uid) as directory:
+        initial = read_state(directory, name)
+        if not initial or not owns_process(directory, name, initial) or initial["utun"] is None:
+            raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
+        require_interface(initial)
+        expected = identity(initial)
     print("Watching " + name + "; Ctrl-C stops watching and leaves the tunnel running", flush=True)
     while True:
         profiles = load_profiles(config)
@@ -582,8 +622,11 @@ def watch(config, name, interval):
             continue
         with state_directory(human().pw_uid) as directory:
             state = read_state(directory, name)
-            if not state or not owns_process(directory, name, state) or state["utun"] is None:
+            if not state or identity(state) != expected:
+                raise Error("watched tunnel changed; restart watch explicitly after inspection")
+            if not owns_process(directory, name, state):
                 raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
+            require_interface(state)
             plan = route_plan(profile, state, desired)
             if plan["add"] or plan["remove"] or plan["conflicts"]:
                 if not owns_process(directory, name, state):

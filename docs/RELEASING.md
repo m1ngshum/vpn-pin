@@ -2,6 +2,8 @@
 
 This workflow is prepared for the first release. No release or Homebrew tap is published by the build script or by merging these files.
 
+Maintainers should run these commands from a complete Git checkout, rather than the smaller installation archive.
+
 ## Build and review
 
 1. Update `VERSION` and `docs/RELEASE_NOTES.md` for each release.
@@ -15,7 +17,7 @@ Before a stable release, validate a live tunnel on a disposable macOS test syste
 
 ## Create a draft after merge
 
-The **Draft release** workflow is manual and restricted to `main`. It reruns tests, builds the exact workflow commit, and creates a draft with all four assets attached. Its job has permission to write release assets; the GitHub CLI token is supplied to draft creation and checkout does not persist credentials. It never publishes the draft automatically.
+The **Draft release** workflow is manual and restricted to `main`. It reruns tests, builds the exact workflow commit, and creates a draft with all four assets attached. Its job has permission to write release assets; the GitHub CLI token is supplied to draft creation and checkout does not persist credentials. The helper checks artifact checksums and receipt, creates the version tag at that exact commit if absent, and rejects an existing tag pointing elsewhere. It verifies the remote tag before and after draft creation. It never publishes the draft automatically.
 
 ```sh
 gh workflow run release.yml --repo m1ngshum/vpn-pin --ref main
@@ -23,7 +25,7 @@ gh run list --repo m1ngshum/vpn-pin --workflow release.yml
 gh release view v0.2.0 --repo m1ngshum/vpn-pin
 ```
 
-Before publishing, enable **release immutability** in the repository's General settings. Review the draft's commit, notes, and assets; select prerelease status when live compatibility remains unverified. Publish manually after approval. Immutable releases lock assets and tags after publication, so attach everything to the draft first. Never move an existing version tag or replace its archive; use a new version.
+Before publishing, enable **release immutability** in the repository's General settings. Review the draft's commit, notes, and assets, and verify that the remote version tag still points to `RELEASE.json`'s commit; select prerelease status when live compatibility remains unverified. Publish manually after approval. Immutable releases lock assets and tags after publication, so attach everything to the draft first. Never move an existing version tag or replace its archive; use a new version.
 
 Download assets and verify checksums with `shasum -a 256 -c SHA256SUMS`. With immutable releases enabled, GitHub CLI can also verify release provenance and assets:
 

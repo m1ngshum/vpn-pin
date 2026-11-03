@@ -22,7 +22,7 @@ class Release(unittest.TestCase):
             root = Path(temporary)
             repo = root / "repo"
             repo.mkdir()
-            for name in ("bin", "lib", "docs"):
+            for name in ("bin", "lib", "docs", "examples"):
                 shutil.copytree(source / name, repo / name, ignore=shutil.ignore_patterns("__pycache__"))
             for name in ("VERSION", "setup.sh", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md"):
                 shutil.copy2(source / name, repo / name)
@@ -56,6 +56,7 @@ class Release(unittest.TestCase):
                 self.assertFalse(any(member.name.endswith("private.key") for member in tar))
                 tar.extractall(root / "extracted")
             extracted = root / "extracted" / ("vpn-pin-" + version)
+            self.assertTrue((extracted / "examples/profiles.example").is_file())
             prefix = root / "installed tools"
             subprocess.check_call([str(extracted / "setup.sh")], env={**os.environ, "PREFIX": str(prefix)}, stdout=subprocess.DEVNULL)
             installed = prefix / "bin/vpn-pin"
