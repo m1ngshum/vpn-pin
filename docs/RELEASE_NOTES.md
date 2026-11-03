@@ -1,4 +1,12 @@
-# vpn-pin 0.2.0-rc.2
+# vpn-pin 0.2.0-rc.3
+
+- Ignore macOS cloned fallback host-cache routes when checking for explicit route conflicts. Deliberate host routes remain protected.
+- Added regression coverage for cloned fallback and scoped static host routes.
+- Bounded live checks passed for three existing OpenVPN profiles: startup, route planning, diagnostics, refresh, certificate-verified TLS, watch interruption, and cleanup. The upstream default route and starting process state were restored. Unauthenticated requests returned HTTP 401; authenticated API access and sleep/wake recovery were not tested.
+
+This remains a prerelease. Automated tests use mocks; the bounded live checks do not establish compatibility with every macOS or VPN configuration.
+
+## Previous: 0.2.0-rc.2
 
 - Added read-only route previews with the same planning logic used by refresh.
 - Added dependency, DNS, route, and process diagnostics; optional bounded TCP checks.
