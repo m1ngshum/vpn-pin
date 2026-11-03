@@ -226,9 +226,22 @@ class StateAndProcess(unittest.TestCase):
         profile = vpn.Profile("work", Path("/client.ovpn"), [], "development", "")
         with patch.object(vpn.sys, "platform", "darwin"), patch.object(vpn, "load_profiles", return_value={"work": profile}), \
                 patch.object(vpn, "executable", return_value="/stub/kubectl"), patch.object(vpn.os, "geteuid", return_value=501), \
+                patch.dict(vpn.os.environ, {"PATH": "/usr/bin:/bin"}), \
                 patch.object(vpn.os, "execv", side_effect=RuntimeError("exec")) as execute, self.assertRaises(RuntimeError):
             vpn.main(["kube", "work", "--", "exec", "-it", "pod", "--", "sh"])
-        self.assertEqual(execute.call_args.args, ("/stub/kubectl", ["/stub/kubectl", "--context=development", "exec", "-it", "pod", "--", "sh"]))
+        self.assertEqual(execute.call_args.args, ("/usr/bin/env", ["/usr/bin/env", "PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin", "/stub/kubectl", "--context=development", "exec", "-it", "pod", "--", "sh"]))
+
+    def test_kube_credential_path_is_set_after_dropping_privileges(self):
+        profile = vpn.Profile("work", Path("/client.ovpn"), [], "development", "cloud")
+        user = type("User", (), {"pw_uid": 501, "pw_name": "fixture", "pw_dir": "/fixture"})()
+        with patch.object(vpn.sys, "platform", "darwin"), patch.object(vpn, "load_profiles", return_value={"work": profile}), \
+                patch.object(vpn, "executable", side_effect=lambda name: "/stub/" + name), patch.object(vpn, "human", return_value=user), \
+                patch.object(vpn.os, "geteuid", return_value=0), patch.dict(vpn.os.environ, {"PATH": "/usr/bin:/bin"}), \
+                patch.object(vpn.os, "execv", side_effect=RuntimeError("exec")) as execute, self.assertRaises(RuntimeError):
+            vpn.main(["kube", "work", "--", "auth", "whoami"])
+        command = execute.call_args.args[1]
+        self.assertEqual(command[:7], ["/usr/bin/sudo", "-H", "-u", "fixture", "--", "/usr/bin/env", "PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin"])
+        self.assertEqual(command[7:], ["/stub/aws-vault", "exec", "cloud", "--", "/stub/kubectl", "--context=development", "auth", "whoami"])
 
     def test_default_route_is_fallback_and_host_route_is_exact(self):
         with patch.object(vpn, "run", return_value="destination: default\nflags: <UP,GATEWAY,DONE>\ninterface: utun9"):

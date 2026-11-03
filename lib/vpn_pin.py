@@ -727,6 +727,8 @@ def main(argv=None):
         command += args.args[1:] if args.args[:1] == ["--"] else args.args
         if profile.aws_profile:
             command = [executable("aws-vault"), "exec", profile.aws_profile, "--"] + command
+        # kubectl credential plugins also need Homebrew tools when sudo restricts PATH.
+        command = ["/usr/bin/env", "PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:" + os.environ.get("PATH", os.defpath)] + command
         user = human()
         if os.geteuid() == 0 and user.pw_uid != 0:
             command = ["/usr/bin/sudo", "-H", "-u", user.pw_name, "--"] + command
