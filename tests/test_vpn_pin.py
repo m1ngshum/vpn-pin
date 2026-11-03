@@ -39,11 +39,10 @@ class Profiles(unittest.TestCase):
 
     def test_host_and_kube_addresses_are_combined_and_deduplicated(self):
         profile = vpn.Profile("work", Path("/client.ovpn"), ["192.0.2.1", "api.example.test"], "test", "")
-        entries = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 0)),
-                   (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.2", 0))]
+        entries = ["192.0.2.1", "192.0.2.2"]
         with patch.object(vpn, "as_user", return_value="https://kube.example.test:6443"), \
                 patch.object(vpn, "executable", return_value="/stub/kubectl"), \
-                patch.object(vpn.socket, "getaddrinfo", return_value=entries):
+                patch.object(vpn, "lookup_ipv4", return_value=entries):
             self.assertEqual(vpn.resolve_ips(profile), ["192.0.2.1", "192.0.2.2"])
 
     def test_invalid_numeric_ip_and_dns_failure(self):
@@ -51,7 +50,7 @@ class Profiles(unittest.TestCase):
         with self.assertRaises(vpn.Error):
             vpn.resolve_ips(profile)
         profile.targets = ["api.example.test"]
-        with patch.object(vpn.socket, "getaddrinfo", side_effect=socket.gaierror("offline")), self.assertRaises(vpn.Error):
+        with patch.object(vpn, "lookup_ipv4", side_effect=vpn.ResolutionError("offline")), self.assertRaises(vpn.Error):
             vpn.resolve_ips(profile)
 
     def test_missing_executable_and_intel_homebrew(self):
@@ -174,6 +173,20 @@ class Routes(unittest.TestCase):
             self.pin()
         self.assertIn("pending_routes", self.saved[-1])
         self.assertEqual(self.routes, {"192.0.2.3": "utun42"})
+
+    def test_route_appearing_after_plan_is_not_overwritten_or_claimed(self):
+        reads = []
+        def route(ip):
+            if ip == "192.0.2.1":
+                reads.append(ip)
+                if len(reads) > 1:
+                    self.routes[ip] = "utun9"
+            return self.routes.get(ip)
+        with patch.object(vpn, "exact_route", side_effect=route), self.assertRaisesRegex(vpn.Error, "changed after planning"):
+            self.pin()
+        self.assertFalse(self.calls)
+        self.assertEqual(self.routes["192.0.2.1"], "utun9")
+        self.assertNotIn("192.0.2.1", self.saved[-1]["routes"])
 
 
 class StateAndProcess(unittest.TestCase):

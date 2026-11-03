@@ -4,6 +4,8 @@ Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them
 
 This is an early public candidate. Automated tests use mocked routes and processes; a live tunnel has not yet been validated.
 
+The 0.2.0 candidate adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
+
 ## Requirements
 
 - macOS and Python 3.9 or newer.
@@ -25,9 +27,21 @@ vpn-pin --help
 
 The installer creates a symlink at `~/.local/bin/vpn-pin`; keep the checkout in place. It refuses to replace an existing file. Use `PREFIX=/another/location ./setup.sh` to choose a different prefix. It does not install dependencies, change shell configuration, or start a VPN.
 
+Versioned archives, checksums, and a Homebrew formula can be generated from a reviewed commit. Homebrew installation is planned after the first release and tap are published; it is not available yet. See [release and upgrade instructions](docs/RELEASING.md). `vpn-pin --version` shows the installed version.
+
 ## Configure
 
-Keep configurations and credentials outside the checkout:
+Keep configurations and credentials outside the checkout. Create a profile without sudo:
+
+```sh
+vpn-pin profile add work --ovpn "$HOME/vpn/work.ovpn" --target api.example.test --target 192.0.2.10
+vpn-pin validate work
+vpn-pin validate work --resolve
+```
+
+The helper creates a private profiles file, refuses duplicate names and unsafe destination files, and preserves existing comments and permissions. `validate` checks profile metadata and file existence; `--resolve` also checks DNS/Kubernetes endpoint lookup. Neither validates OpenVPN credentials or reads client configuration contents.
+
+Alternatively, copy and edit the template:
 
 ```sh
 mkdir -p "$HOME/.config/vpn-pin"
@@ -54,20 +68,29 @@ Names contain letters, digits, underscores, or hyphens and start with a letter o
 vpn-pin profiles
 vpn-pin up work
 vpn-pin status
+vpn-pin plan work
 vpn-pin refresh work
+vpn-pin watch work --interval 30
 vpn-pin down work
 vpn-pin reconnect work
 vpn-pin doctor
+sudo vpn-pin doctor work --port 443
 vpn-pin kube cluster -- get namespaces
 ```
 
 Tunnel commands and status request sudo when needed. Kubernetes commands run as your user, inherit the terminal, and preserve the command's exit status. `down all` and `reconnect all` operate on all configured profiles. Stop a profile before removing or renaming it in the configuration.
 
+`plan` is a read-only snapshot of additions, removals, and conflicts; it creates no runtime state. When a tunnel is down, it previews destinations that need a tunnel. Refresh calculates a new plan under its lock and never treats an earlier preview as permission to overwrite another route.
+
+`doctor` checks dependencies, configuration metadata, DNS, default routing, and available process/host-route ownership. Run it with sudo to inspect private runtime state. TCP checks are opt-in with `--port`, have a two-second connection timeout per IP, and are skipped without a verified tunnel and owned route. A successful connection proves TCP reachability only; it does not verify authentication, TLS, or application health.
+
+`watch` runs in the foreground on one already-initialized tunnel. Each tick reloads its profile, resolves current IPv4 targets, then rechecks process and route ownership under the lock before refreshing. Lookups and waits happen outside the lock. DNS failures preserve routes and retry with capped backoff; conflicts, stale processes, removed profiles, or unfinished journals stop watching for inspection. Ctrl-C leaves the tunnel running. It never starts or stops tunnels automatically. OpenVPN's own reconnect behavior can recover its existing tunnel after a network interruption; watch restores missing host routes when that owned tunnel remains initialized. Start another watch explicitly after manual tunnel restart. Intervals must be 5–3600 seconds.
+
 `refresh` resolves replacement addresses before changing routes. It refuses conflicting exact host routes, records mutation intent, adds new routes first, and attempts rollback if a change fails or is interrupted. Failed rollback records the routes that remain. `status` checks the recorded process identity and marks routes whose interface is missing or changed; it does not prove endpoint reachability.
 
 ## Routing and recovery
 
-vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. It does not configure DNS, monitor changing DNS records, retry refreshes automatically, alter kill switches, or add IPv6 routes. `doctor` shows the local IPv4 routing table for inspection.
+vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. It does not configure DNS, alter kill switches, or add IPv6 routes. DNS monitoring requires an explicitly running `watch`; ordinary `up`/`refresh` are one-shot commands. DNS subprocesses time out after ten seconds per hostname; other captured subprocesses time out after thirty seconds.
 
 Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings.
 

@@ -1,0 +1,27 @@
+name: Draft release
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+      - run: python3 scripts/build_release.py --commit "$GITHUB_SHA" --output dist
+      - name: Create draft for manual publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(cat VERSION)
+          gh release create "v$version" --target "$GITHUB_SHA" --draft \
+            --title "vpn-pin $version" --notes-file docs/RELEASE_NOTES.md dist/*
