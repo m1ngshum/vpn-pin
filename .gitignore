@@ -14,3 +14,4 @@ __pycache__/
 .DS_Store
 FORK_REPORT.md
 SANITIZATION_REPORT.md
+dist/

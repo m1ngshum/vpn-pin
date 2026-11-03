@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -39,11 +40,10 @@ class Profiles(unittest.TestCase):
 
     def test_host_and_kube_addresses_are_combined_and_deduplicated(self):
         profile = vpn.Profile("work", Path("/client.ovpn"), ["192.0.2.1", "api.example.test"], "test", "")
-        entries = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 0)),
-                   (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.2", 0))]
+        entries = ["192.0.2.1", "192.0.2.2"]
         with patch.object(vpn, "as_user", return_value="https://kube.example.test:6443"), \
                 patch.object(vpn, "executable", return_value="/stub/kubectl"), \
-                patch.object(vpn.socket, "getaddrinfo", return_value=entries):
+                patch.object(vpn, "lookup_ipv4", return_value=entries):
             self.assertEqual(vpn.resolve_ips(profile), ["192.0.2.1", "192.0.2.2"])
 
     def test_invalid_numeric_ip_and_dns_failure(self):
@@ -51,7 +51,7 @@ class Profiles(unittest.TestCase):
         with self.assertRaises(vpn.Error):
             vpn.resolve_ips(profile)
         profile.targets = ["api.example.test"]
-        with patch.object(vpn.socket, "getaddrinfo", side_effect=socket.gaierror("offline")), self.assertRaises(vpn.Error):
+        with patch.object(vpn, "lookup_ipv4", side_effect=vpn.ResolutionError("offline")), self.assertRaises(vpn.Error):
             vpn.resolve_ips(profile)
 
     def test_missing_executable_and_intel_homebrew(self):
@@ -69,13 +69,18 @@ class Profiles(unittest.TestCase):
 class Routes(unittest.TestCase):
     def setUp(self):
         self.profile = vpn.Profile("work", Path("/client.ovpn"), [], "", "")
-        self.state = {"pid": 123, "started": "start", "utun": "utun42", "routes": ["192.0.2.3"]}
+        self.state = {"pid": 123, "started": "start", "utun": "utun42", "ifindex": 42, "routes": ["192.0.2.3"]}
+        log = b"fixture initial log\n"
+        guard = {"device": 1, "inode": 2, "size": len(log), "sha256": hashlib.sha256(log).hexdigest()}
+        self.state["log_guard"] = guard
         self.routes = {"192.0.2.3": "utun42"}
         self.saved = []
         self.calls = []
         self.fail_add = set()
         self.fail_remove = set()
-        patches = [patch.object(vpn, "resolve_ips", return_value=["192.0.2.1", "192.0.2.2"]),
+        patches = [patch.object(vpn.socket, "if_nametoindex", return_value=42),
+                   patch.object(vpn, "log_snapshot", return_value=(log, guard)),
+                   patch.object(vpn, "resolve_ips", return_value=["192.0.2.1", "192.0.2.2"]),
                    patch.object(vpn, "exact_route", side_effect=lambda ip: self.routes.get(ip)),
                    patch.object(vpn, "add_route", side_effect=self.add),
                    patch.object(vpn, "remove_route", side_effect=self.remove),
@@ -145,10 +150,10 @@ class Routes(unittest.TestCase):
             self.assertEqual(self.saved[0]["pending_routes"], ["192.0.2.1", "192.0.2.2", "192.0.2.3"])
             self.add(ip, interface)
             raise KeyboardInterrupt()
-        with patch.object(vpn, "add_route", side_effect=interrupted), self.assertRaisesRegex(vpn.Error, "retained for cleanup"):
+        with patch.object(vpn, "add_route", side_effect=interrupted), self.assertRaisesRegex(vpn.Error, "unfinished journal"):
             self.pin()
-        self.assertEqual(self.saved[-1]["routes"], sorted(self.routes))
-        self.assertIn("192.0.2.1", self.saved[-1]["routes"])
+        self.assertIn("192.0.2.1", self.saved[-1]["pending_routes"])
+        self.assertNotIn("192.0.2.1", self.saved[-1]["routes"])
 
     def test_final_state_write_failure_restores_previous_routes(self):
         attempts = []
@@ -173,6 +178,26 @@ class Routes(unittest.TestCase):
         with patch.object(vpn, "save_state", side_effect=save), self.assertRaisesRegex(vpn.Error, "inspect recorded intent"):
             self.pin()
         self.assertIn("pending_routes", self.saved[-1])
+        self.assertEqual(self.routes, {"192.0.2.3": "utun42"})
+
+    def test_route_appearing_after_plan_is_not_overwritten_or_claimed(self):
+        reads = []
+        def route(ip):
+            if ip == "192.0.2.1":
+                reads.append(ip)
+                if len(reads) > 1:
+                    self.routes[ip] = "utun42"
+            return self.routes.get(ip)
+        with patch.object(vpn, "exact_route", side_effect=route), self.assertRaisesRegex(vpn.Error, "changed after planning"):
+            self.pin()
+        self.assertFalse(self.calls)
+        self.assertEqual(self.routes["192.0.2.1"], "utun42")
+        self.assertNotIn("192.0.2.1", self.saved[-1]["routes"])
+
+    def test_interface_generation_change_before_add_leaves_routes_untouched(self):
+        with patch.object(vpn.socket, "if_nametoindex", side_effect=[42, 99]), self.assertRaisesRegex(vpn.Error, "interface identity changed"):
+            self.pin()
+        self.assertFalse(self.calls)
         self.assertEqual(self.routes, {"192.0.2.3": "utun42"})
 
 
@@ -279,6 +304,7 @@ class StateAndProcess(unittest.TestCase):
                     patch.object(vpn, "executable", return_value="/stub/openvpn"), patch.object(vpn, "run", side_effect=launch), \
                     patch.object(vpn, "private_file"), patch.object(vpn, "save_state", side_effect=save), \
                     patch.object(vpn, "process_value", side_effect=lambda pid, field: values[field]), \
+                    patch.object(vpn.socket, "if_nametoindex", return_value=42), \
                     patch.object(vpn, "pin_routes"), contextlib.redirect_stdout(io.StringIO()):
                 vpn.up(root, profile)
             self.assertEqual(saved[-1]["utun"], "utun42")
@@ -318,6 +344,24 @@ class StateAndProcess(unittest.TestCase):
                     patch.object(vpn, "save_state"), patch.object(vpn, "process_value", return_value="started"), \
                     patch.object(vpn, "owns_process", return_value=True), patch.object(vpn.time, "sleep"), \
                     patch.object(vpn.os, "kill") as kill, patch.object(Path, "unlink"), self.assertRaises(vpn.Error):
+                vpn.up(root, profile)
+            kill.assert_called_once_with(123, signal.SIGTERM)
+
+    def test_startup_does_not_accept_initialization_from_before_a_reopen(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = vpn.Profile("work", Path("/client.ovpn"), ["192.0.2.1"], "", "")
+            def launch(args):
+                self.assertIn("--log-append", args)
+                (root / "work.pid").write_text("123")
+                (root / "work.log").write_text("Opened utun device utun42\nInitialization Sequence Completed\nSIGHUP received\nOpened utun device utun42\n")
+            with patch.object(vpn, "read_state", return_value=None), patch.object(vpn, "resolve_ips"), \
+                    patch.object(vpn, "wrapper", return_value=root / "work.conf"), \
+                    patch.object(vpn, "executable", return_value="/stub/openvpn"), patch.object(vpn, "run", side_effect=launch), \
+                    patch.object(vpn, "private_file"), patch.object(vpn, "save_state"), \
+                    patch.object(vpn, "process_value", return_value="started"), patch.object(vpn, "owns_process", return_value=True), \
+                    patch.object(vpn.time, "sleep"), patch.object(vpn.os, "kill") as kill, \
+                    self.assertRaisesRegex(vpn.Error, "did not initialize"):
                 vpn.up(root, profile)
             kill.assert_called_once_with(123, signal.SIGTERM)
 
