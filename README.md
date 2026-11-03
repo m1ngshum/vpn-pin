@@ -2,14 +2,14 @@
 
 Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them. Keep your upstream connection, including an existing VPN, for other traffic. Profiles can target any hostname or IPv4 address; Kubernetes and aws-vault are optional.
 
-This is an early public candidate. Automated tests use mocked routes and processes; a live tunnel has not yet been validated.
+This is an early public candidate. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
 
 The 0.2.0-rc.3 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
 
 ## Requirements
 
 - macOS and Python 3.9 or newer.
-- OpenVPN 2.6 or newer as the intended compatibility baseline. Live compatibility with these versions has not yet been verified.
+- OpenVPN 2.6 or newer as the intended compatibility baseline. Bounded live checks used OpenVPN 2.7.8; other versions remain unverified.
 - Your own trusted OpenVPN client configuration and working credentials.
 - Optional: `kubectl` for Kubernetes targets; `aws-vault` for the Kubernetes command wrapper.
 
