@@ -2,14 +2,14 @@
 
 Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them. Keep your upstream connection, including an existing VPN, for other traffic. Profiles can target any hostname or IPv4 address; Kubernetes and aws-vault are optional.
 
-This is an early public candidate. Automated tests use mocked routes and processes; a live tunnel has not yet been validated.
+This is an early public candidate. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
 
-The 0.2.0-rc.2 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
+The 0.2.0-rc.3 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
 
 ## Requirements
 
 - macOS and Python 3.9 or newer.
-- OpenVPN 2.6 or newer as the intended compatibility baseline. Live compatibility with these versions has not yet been verified.
+- OpenVPN 2.6 or newer as the intended compatibility baseline. Bounded live checks used OpenVPN 2.7.8; other versions remain unverified.
 - Your own trusted OpenVPN client configuration and working credentials.
 - Optional: `kubectl` for Kubernetes targets; `aws-vault` for the Kubernetes command wrapper.
 
@@ -94,7 +94,7 @@ Tunnel commands and status request sudo when needed. Kubernetes commands run as 
 
 `watch` runs in the foreground on one already-initialized tunnel and binds to its initial process, interface index, and private log checkpoint. Each tick reloads its profile, resolves current IPv4 targets, then rechecks process and route ownership under the lock before refreshing. Lookups and waits happen outside the lock. DNS failures preserve routes and retry with capped backoff; conflicts, stale processes, changed process/interface identity, tunnel close/reopen events, lost log continuity, removed profiles, or unfinished journals stop watching for inspection. Ctrl-C leaves the tunnel running. It never starts or stops tunnels automatically. OpenVPN's own reconnect behavior can recover its existing tunnel after a network interruption; watch restores missing host routes when that same owned tunnel remains initialized. Start another watch explicitly after manual tunnel restart. Intervals must be 5–3600 seconds.
 
-`refresh` resolves replacement addresses before changing routes. It refuses conflicting exact host routes, records mutation intent, adds new routes first, and attempts rollback if a change fails or is interrupted. Failed rollback records the routes that remain. `status` checks the recorded process identity and marks routes whose interface is missing or changed; it does not prove endpoint reachability.
+`refresh` resolves replacement addresses before changing routes. It refuses conflicting explicit host routes, records mutation intent, adds new routes first, and attempts rollback if a change fails or is interrupted. macOS fallback-cache entries marked `WASCLONED` are not explicit pins; deliberate host routes, including scoped/static routes, remain protected. Failed rollback records the routes that remain. `status` checks the recorded process identity and marks routes whose interface is missing or changed; it does not prove endpoint reachability.
 
 ## Routing and recovery
 

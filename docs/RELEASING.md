@@ -22,7 +22,7 @@ The **Draft release** workflow is manual and restricted to `main`. It reruns tes
 ```sh
 gh workflow run release.yml --repo m1ngshum/vpn-pin --ref main
 gh run list --repo m1ngshum/vpn-pin --workflow release.yml
-gh release view v0.2.0-rc.2 --repo m1ngshum/vpn-pin
+gh release view v0.2.0-rc.3 --repo m1ngshum/vpn-pin
 ```
 
 Before publishing, enable **release immutability** in the repository's General settings. Review the draft's commit, notes, and assets, and verify that the remote version tag still points to `RELEASE.json`'s commit; select prerelease status when live compatibility remains unverified. Publish manually after approval. Immutable releases lock assets and tags after publication, so attach everything to the draft first. Never move an existing version tag or replace its archive; use a new version.
@@ -30,8 +30,8 @@ Before publishing, enable **release immutability** in the repository's General s
 Download assets and verify checksums with `shasum -a 256 -c SHA256SUMS`. With immutable releases enabled, GitHub CLI can also verify release provenance and assets:
 
 ```sh
-gh release verify v0.2.0-rc.2 --repo m1ngshum/vpn-pin
-gh release verify-asset v0.2.0-rc.2 vpn-pin-0.2.0-rc.2.tar.gz --repo m1ngshum/vpn-pin
+gh release verify v0.2.0-rc.3 --repo m1ngshum/vpn-pin
+gh release verify-asset v0.2.0-rc.3 vpn-pin-0.2.0-rc.3.tar.gz --repo m1ngshum/vpn-pin
 ```
 
 See [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) and [verification](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/verify-release-integrity).

@@ -303,7 +303,9 @@ def exact_route(ip):
         if ":" in line:
             key, value = line.strip().split(":", 1)
             fields[key] = value.strip()
-    if fields.get("destination") == ip and "HOST" in fields.get("flags", ""):
+    flags = set(fields.get("flags", "").strip("<>").split(","))
+    # macOS caches fallback lookups as cloned host routes; these are not explicit pins.
+    if fields.get("destination") == ip and "HOST" in flags and "WASCLONED" not in flags:
         return fields.get("interface")
     return None
 
