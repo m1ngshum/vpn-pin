@@ -4,7 +4,7 @@ Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them
 
 This is an early public candidate. Automated tests use mocked routes and processes; a live tunnel has not yet been validated.
 
-The 0.2.0 candidate adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
+The 0.2.0-rc.1 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
 
 ## Requirements
 
@@ -27,7 +27,15 @@ vpn-pin --help
 
 The installer creates a symlink at `~/.local/bin/vpn-pin`; keep the checkout in place. It refuses to replace an existing file. Use `PREFIX=/another/location ./setup.sh` to choose a different prefix. It does not install dependencies, change shell configuration, or start a VPN.
 
-Versioned archives, checksums, and a Homebrew formula can be generated from a reviewed commit. Homebrew installation is planned after the first release and tap are published; it is not available yet. See [release and upgrade instructions](docs/RELEASING.md). `vpn-pin --version` shows the installed version.
+The prerelease distribution uses a checksummed archive and Homebrew formula. Once the release and tap are published, install and update with:
+
+```sh
+brew install m1ngshum/tap/vpn-pin
+brew update
+brew upgrade m1ngshum/tap/vpn-pin
+```
+
+See [release and upgrade instructions](docs/RELEASING.md) for verification and migration from checkout installs. `vpn-pin --version` shows the installed version. Profiles and runtime state stay outside the installation directory.
 
 ## Configure
 
@@ -115,3 +123,7 @@ Tests use temporary files and mocks without starting tunnels, invoking sudo, rea
 Licensed under [MIT](LICENSE).
 
 For private vulnerability reports, see [SECURITY.md](SECURITY.md).
+
+## AI skills
+
+Agents working from a source checkout can use [vpn-pin-operate](.agents/skills/vpn-pin-operate/SKILL.md) for setup/diagnosis and [vpn-pin-release](.agents/skills/vpn-pin-release/SKILL.md) for release and Homebrew maintenance. These small repository skills reuse the existing CLI and release scripts. They do not install an AI runtime or grant permission to change a VPN; the current user request determines the authorized actions.
