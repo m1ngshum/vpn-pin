@@ -106,6 +106,8 @@ Runtime state, generated wrappers, and OpenVPN logs live under the root-owned `/
 
 State is lost on reboot. Startup interface detection relies on OpenVPN's standard English log message. A failed startup leaves diagnostic logs; `down` can recover a recorded unfinished startup. Reconnect stops the tunnel before starting it, so startup failure leaves that profile down.
 
+If sleep or a network change closes and recreates the tunnel interface, watch stops for inspection; it does not adopt the replacement interface. After inspection, reconnect explicitly. `down` can stop the positively identified process when its recorded host routes are confirmed absent, without deleting any routes. Existing routes still require verified tunnel continuity; failed or malformed route lookups stop cleanup.
+
 macOS can reuse interface names and indexes. The tool also keeps a checkpoint of its append-only OpenVPN log and rejects later close/reopen signals, rotation, truncation, or rewritten startup content before route changes. Continuity checks stop if the log exceeds 4 MiB; inspect and restart the session explicitly. This assumes the trusted OpenVPN configuration does not disable or redirect lifecycle logging.
 
 Older runtime records without an interface index and log checkpoint cannot be refreshed, watched, or have their recorded routes automatically removed by this version. Stop those tunnels with the previous version before upgrading; otherwise inspect legacy state manually. Restart afterward to record interface identity and log continuity.

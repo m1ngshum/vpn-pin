@@ -301,6 +301,47 @@ class StateAndProcess(unittest.TestCase):
             vpn.down(Path("/state"), "work")
         kill.assert_not_called()
 
+    def test_down_stops_owned_process_when_recorded_routes_are_confirmed_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
+            vpn.state_path(directory, "work").write_text("{}")
+            with patch.object(vpn, "read_state", return_value=state), \
+                    patch.object(vpn, "owns_process", side_effect=[True, True, False]), \
+                    patch.object(vpn, "exact_route", return_value=None), \
+                    patch.object(vpn, "require_lifetime", side_effect=vpn.Error("lifecycle changed")) as lifetime, \
+                    patch.object(vpn, "remove_route") as remove, patch.object(vpn.os, "kill") as kill, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                vpn.down(directory, "work")
+            lifetime.assert_not_called()
+            remove.assert_not_called()
+            kill.assert_called_once_with(123, signal.SIGTERM)
+            self.assertFalse(vpn.state_path(directory, "work").exists())
+
+    def test_down_preserves_routes_and_process_when_ownership_or_lookup_is_uncertain(self):
+        for route, error in [("utun42", None), ("utun99", None), (None, vpn.Error("route lookup failed"))]:
+            with self.subTest(route=route, error=error):
+                state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
+                with patch.object(vpn, "read_state", return_value=state), patch.object(vpn, "owns_process", return_value=True), \
+                        patch.object(vpn, "exact_route", return_value=route, side_effect=error), \
+                        patch.object(vpn, "require_lifetime", side_effect=vpn.Error("lifecycle changed")), \
+                        patch.object(vpn, "remove_route") as remove, patch.object(vpn, "save_state") as save, \
+                        patch.object(vpn.os, "kill") as kill, self.assertRaises(vpn.Error):
+                    vpn.down(Path("/state"), "work")
+                self.assertEqual(state["routes"], ["192.0.2.1"])
+                remove.assert_not_called()
+                save.assert_not_called()
+                kill.assert_not_called()
+
+    def test_failed_or_malformed_route_lookup_cannot_prove_absence(self):
+        with patch.object(vpn, "run", side_effect=vpn.Error("route lookup failed")) as lookup, self.assertRaises(vpn.Error):
+            vpn.exact_route("192.0.2.1")
+        lookup.assert_called_once_with(["/sbin/route", "-n", "get", "192.0.2.1"])
+        for output in ("", "destination: default\ninterface: utun9", "flags: <UP,HOST>\ninterface: utun9",
+                       "destination: default\ninterface: utun9\nflags: <UP,,DONE>"):
+            with self.subTest(output=output), patch.object(vpn, "run", return_value=output), self.assertRaises(vpn.Error):
+                vpn.exact_route("192.0.2.1")
+
     def test_unfinished_journal_blocks_automatic_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
