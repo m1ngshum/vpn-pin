@@ -342,6 +342,18 @@ class StateAndProcess(unittest.TestCase):
             with self.subTest(output=output), patch.object(vpn, "run", return_value=output), self.assertRaises(vpn.Error):
                 vpn.exact_route("192.0.2.1")
 
+    def test_down_does_not_delete_foreign_route_even_with_valid_lifetime(self):
+        state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
+        with patch.object(vpn, "read_state", return_value=state), patch.object(vpn, "owns_process", return_value=True), \
+                patch.object(vpn, "exact_route", return_value="utun99"), patch.object(vpn, "require_lifetime"), \
+                patch.object(vpn, "run") as route_command, patch.object(vpn, "save_state") as save, \
+                patch.object(vpn.os, "kill") as kill, self.assertRaisesRegex(vpn.Error, "ownership changed"):
+            vpn.down(Path("/state"), "work")
+        route_command.assert_not_called()
+        save.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(state["routes"], ["192.0.2.1"])
+
     def test_unfinished_journal_blocks_automatic_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
