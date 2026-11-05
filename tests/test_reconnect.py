@@ -33,6 +33,7 @@ class RestartOwned(unittest.TestCase):
         self.profiles = mock("load_profiles", return_value={"work": self.profile})
         self.client = mock("client_identity", return_value="stamp")
         self.route = mock("exact_route", side_effect=lambda ip: "utun43" if self.started else None)
+        self.real_down = vpn.down
         self.down = mock("down")
         def startup(*args):
             self.started = True
@@ -168,6 +169,47 @@ class RestartOwned(unittest.TestCase):
         self.route.side_effect = [None, None, None, None, "utun9"]
         with self.assertRaisesRegex(vpn.Error, "routes are not verified"):
             self.restart()
+
+    def test_real_stop_ownership_loss_cannot_clear_state_or_start_again(self):
+        self.down.side_effect = self.real_down
+        self.read.side_effect = lambda *args: copy.deepcopy(self.new if self.started else self.old)
+        self.owns.side_effect = [True, False, True]
+        with patch.object(vpn, "clean_stale") as stale, patch.object(vpn.os, "kill") as kill:
+            with self.assertRaisesRegex(vpn.Error, "ownership lost"):
+                self.restart()
+        stale.assert_not_called()
+        kill.assert_not_called()
+        self.up.assert_not_called()
+
+    def test_real_stop_rechecks_log_after_its_own_confirmed_route_pruning(self):
+        for message in ("termination requested", "log was replaced"):
+            with self.subTest(message=message):
+                disk = [copy.deepcopy(self.old)]
+                self.read.side_effect = lambda *args: copy.deepcopy(disk[0])
+                self.owns.side_effect = None
+                self.owns.return_value = True
+                self.life.side_effect = vpn.ContinuityError("closed")
+                self.down.side_effect = self.real_down
+                self.down.reset_mock()
+                with patch.object(vpn, "checked_log_tail", side_effect=[b"closed", vpn.Error(message)]), \
+                        patch.object(vpn, "save_state", side_effect=lambda d, n, state: disk.__setitem__(0, copy.deepcopy(state))), \
+                        patch.object(vpn.os, "kill", side_effect=AssertionError("must not signal")) as kill:
+                    with self.assertRaisesRegex(vpn.Error, message):
+                        self.restart()
+                self.assertEqual(disk[0]["routes"], [])
+                self.down.assert_called_once()
+                kill.assert_not_called()
+                self.up.assert_not_called()
+
+    def test_real_stop_rejects_late_state_replacement_before_signaling(self):
+        self.old["routes"] = []
+        self.down.side_effect = self.real_down
+        self.read.side_effect = [copy.deepcopy(self.old), copy.deepcopy(self.old), dict(self.old, pid=999)]
+        with patch.object(vpn, "checked_log_tail", return_value=b"closed"), \
+                patch.object(vpn.os, "kill") as kill, self.assertRaisesRegex(vpn.Error, "state changed during"):
+            self.restart()
+        kill.assert_not_called()
+        self.up.assert_not_called()
 
 
 class AutoWatch(unittest.TestCase):

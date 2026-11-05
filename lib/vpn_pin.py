@@ -537,15 +537,23 @@ def down(directory, name, expected=None):
         print(name + " is down")
         return
     if not owns_process(directory, name, state):
+        if expected is not None:
+            raise Error("process ownership lost before automatic stop; inspect before recovery")
         clean_stale(directory, name, state)
         print(name + " stale state cleared; no process killed")
         return
+    if expected is not None:
+        checked_log_tail(directory, name, state)
     for ip in list(state["routes"]):
         if exact_route(ip) is not None:
             require_lifetime(directory, name, state)
             remove_route(ip, state["utun"])
         state["routes"].remove(ip)
         save_state(directory, name, state)
+    if expected is not None:
+        if read_state(directory, name) != state:
+            raise Error("runtime state changed during automatic stop; inspect before recovery")
+        checked_log_tail(directory, name, state)
     if not owns_process(directory, name, state):
         raise Error("process identity changed; refusing to send a signal")
     os.kill(state["pid"], signal.SIGTERM)
