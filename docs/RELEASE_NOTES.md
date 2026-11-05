@@ -1,4 +1,13 @@
-# vpn-pin 0.2.0-rc.3
+# vpn-pin 0.2.0-rc.4
+
+- Make Homebrew credential helpers available to Kubernetes commands under a restricted PATH, preserving existing PATH precedence and applying the environment after privilege drop.
+- Allow explicit cleanup of a positively identified tunnel process when recorded host routes are conclusively absent. Existing routes still require verified tunnel continuity and ownership; failed or malformed lookups preserve state and stop cleanup.
+- Added regressions for credential-helper precedence, delegated environments, uncertain route lookups, absent routes, and foreign-route protection. All 63 tests passed on Python 3.9 and 3.14.
+- Bounded live checks passed for three existing profiles: TCP/TLS, authenticated identity, a read-only namespace request, restarted watchers, and cleanup. A real sleep/wake cycle changed interface lifecycles, causing watchers to stop conservatively. After unlock, explicit cleanup and fresh reconnection restored authenticated access on all three profiles. Original routing, private profiles, and power settings were preserved.
+
+This remains a prerelease. Interface recreation requires inspection and explicit reconnect; automatic adoption of a replacement interface is not supported. Bounded checks do not establish compatibility with every macOS or VPN configuration.
+
+## Previous: 0.2.0-rc.3
 
 - Ignore macOS cloned fallback host-cache routes when checking for explicit route conflicts. Deliberate host routes remain protected.
 - Added regression coverage for cloned fallback and scoped static host routes.

@@ -4,7 +4,7 @@ Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them
 
 This is an early public candidate. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
 
-The 0.2.0-rc.3 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
+The 0.2.0-rc.4 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
 
 ## Requirements
 
