@@ -559,6 +559,15 @@ def down(directory, name, expected=None):
     os.kill(state["pid"], signal.SIGTERM)
     for _ in range(50):
         if not owns_process(directory, name, state):
+            if expected is not None:
+                try:
+                    os.kill(state["pid"], 0)
+                except ProcessLookupError:
+                    pass
+                except OSError as error:
+                    raise Error("cannot confirm process exit; state retained for " + name) from error
+                else:
+                    raise Error("process still exists without verified ownership; state retained for " + name)
             state_path(directory, name).unlink()
             print(name + " stopped")
             return

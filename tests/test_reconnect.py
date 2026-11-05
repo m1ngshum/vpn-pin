@@ -181,6 +181,35 @@ class RestartOwned(unittest.TestCase):
         kill.assert_not_called()
         self.up.assert_not_called()
 
+    def test_real_stop_requires_positive_process_exit_before_fresh_start(self):
+        self.old["routes"] = []
+        self.down.side_effect = self.real_down
+        for probe_error in (None, PermissionError("denied"), OSError("inspection failed"), ProcessLookupError("gone")):
+            with self.subTest(probe_error=probe_error), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "work.json"
+                path.write_text("retained state")
+                self.started = False
+                self.up.reset_mock()
+                self.read.side_effect = lambda *args: copy.deepcopy(self.new if self.started else self.old)
+                self.owns.side_effect = [True, True, True, False, True]
+                self.life.side_effect = [vpn.ContinuityError("closed"), None]
+                def signal_process(pid, sig):
+                    if sig == 0 and probe_error is not None:
+                        raise probe_error
+                with patch.object(vpn, "checked_log_tail", return_value=b"closed"), \
+                        patch.object(vpn, "state_path", return_value=path), \
+                        patch.object(vpn.os, "kill", side_effect=signal_process) as kill:
+                    if isinstance(probe_error, ProcessLookupError):
+                        self.assertEqual(self.restart(), self.new)
+                        self.assertFalse(path.exists())
+                        self.up.assert_called_once()
+                    else:
+                        with self.assertRaises(vpn.Error):
+                            self.restart()
+                        self.up.assert_not_called()
+                        self.assertTrue(path.exists())
+                self.assertEqual([call.args for call in kill.call_args_list], [(123, signal.SIGTERM), (123, 0)])
+
     def test_real_stop_rechecks_log_after_its_own_confirmed_route_pruning(self):
         for message in ("termination requested", "log was replaced"):
             with self.subTest(message=message):
