@@ -28,6 +28,10 @@ class Error(Exception):
     pass
 
 
+class ContinuityError(Error):
+    pass
+
+
 class ResolutionError(Error):
     pass
 
@@ -344,9 +348,11 @@ def require_interface(state):
     try:
         current = socket.if_nametoindex(state["utun"])
     except OSError as error:
-        raise Error("tunnel interface disappeared; inspect before recovery") from error
+        if state["utun"] not in dict(socket.if_nameindex()).values():
+            raise ContinuityError("tunnel interface disappeared; inspect before recovery") from error
+        raise Error("cannot inspect tunnel interface; inspect before recovery") from error
     if current != state["ifindex"]:
-        raise Error("tunnel interface identity changed; inspect before recovery")
+        raise ContinuityError("tunnel interface identity changed; inspect before recovery")
 
 
 def log_snapshot(path):
@@ -361,8 +367,7 @@ def log_snapshot(path):
                   "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def require_lifetime(directory, name, state):
-    require_interface(state)
+def checked_log_tail(directory, name, state):
     guard = state.get("log_guard")
     if not isinstance(guard, dict):
         raise Error("log continuity unavailable; stop with the previous version or inspect legacy state manually")
@@ -375,8 +380,17 @@ def require_lifetime(directory, name, state):
             raise Error("tunnel log was replaced or reset; inspect before recovery")
     except (KeyError, TypeError) as error:
         raise Error("invalid tunnel log continuity record") from error
-    if re.search(rb"Opened utun device|Closing TUN/TAP interface|SIGHUP|SIGTERM|SIGINT", data[size:]):
-        raise Error("tunnel lifecycle changed; inspect before recovery")
+    tail = data[size:]
+    if re.search(rb"SIGTERM|SIGINT", tail):
+        raise Error("tunnel termination requested; inspect before recovery")
+    return tail
+
+
+def require_lifetime(directory, name, state):
+    tail = checked_log_tail(directory, name, state)
+    require_interface(state)
+    if re.search(rb"Opened utun device|Closing TUN/TAP interface|SIGHUP", tail):
+        raise ContinuityError("tunnel lifecycle changed; inspect before recovery")
 
 
 def pin_routes(directory, profile, state, desired=None):
@@ -458,17 +472,19 @@ def wrapper(directory, profile):
     return path
 
 
-def up(directory, profile):
+def up(directory, profile, desired=None):
     state = read_state(directory, profile.name)
+    if state and desired is not None:
+        raise Error("runtime state appeared before fresh startup; inspect before recovery")
     if state:
         if owns_process(directory, profile.name, state):
             if state["utun"] is None:
                 raise Error(profile.name + " has unfinished startup state; run down before retrying")
             print(profile.name + " already up on " + state["utun"])
-            pin_routes(directory, profile, state)
-            return
+            pin_routes(directory, profile, state, desired)
+            return state
         clean_stale(directory, profile.name, state)
-    resolve_ips(profile)  # Fail before starting a tunnel when configuration/DNS is unusable.
+    desired = resolve_ips(profile) if desired is None else desired
     config = wrapper(directory, profile)
     log = directory / (profile.name + ".log")
     pidfile = directory / (profile.name + ".pid")
@@ -509,11 +525,14 @@ def up(directory, profile):
         raise Error("OpenVPN process identity did not match; refusing route changes")
     save_state(directory, profile.name, state)
     print(profile.name + " up on " + state["utun"])
-    pin_routes(directory, profile, state)
+    pin_routes(directory, profile, state, desired)
+    return state
 
 
-def down(directory, name):
+def down(directory, name, expected=None):
     state = read_state(directory, name)
+    if expected is not None and state != expected:
+        raise Error("runtime state changed before automatic stop; inspect before recovery")
     if not state:
         print(name + " is down")
         return
@@ -633,8 +652,60 @@ def doctor(config, name=None, port=None):
         raise Error("; ".join(problems))
 
 
-def watch(config, name, interval):
+def client_identity(profile):
+    try:
+        info = profile.ovpn.stat()
+    except OSError as error:
+        raise Error("cannot inspect client configuration metadata") from error
+    if not stat.S_ISREG(info.st_mode):
+        raise Error("client configuration is not a regular file")
+    return tuple(getattr(info, field) for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_uid", "st_gid"))
+
+
+def restart_owned(directory, config, profile, state, desired, client_stamp):
+    if read_state(directory, profile.name) != state or not owns_process(directory, profile.name, state):
+        raise Error("runtime process or state changed; refusing automatic reconnect")
+    try:
+        require_lifetime(directory, profile.name, state)
+    except ContinuityError:
+        pass
+    else:
+        raise Error("automatic reconnect requires verified tunnel continuity loss")
+
+    def unchanged():
+        if load_profiles(config).get(profile.name) != profile or client_identity(profile) != client_stamp:
+            raise Error("profile or client configuration changed; refusing automatic reconnect")
+
+    ips = sorted(set(state["routes"] + desired))
+
+    def absent():
+        if any(exact_route(ip) is not None for ip in ips):
+            raise Error("recorded or target host routes remain; inspect before automatic reconnect")
+
+    unchanged()
+    absent()
+    print("Restarting " + profile.name + " once with a fresh verified tunnel session", flush=True)
+    # Keep the bounded stop/start transition exclusive; never adopt a recreated interface.
+    down(directory, profile.name, expected=state)
+    unchanged()
+    absent()
+    created = up(directory, profile, desired)
+    current = read_state(directory, profile.name)
+    if not current or current != created or not owns_process(directory, profile.name, current):
+        raise Error("new tunnel process is not owned; inspect before recovery")
+    require_lifetime(directory, profile.name, current)
+    if set(current["routes"]) != set(desired) or any(exact_route(ip) != current["utun"] for ip in desired):
+        raise Error("new tunnel routes are not verified; inspect before recovery")
+    return current
+
+
+def watch(config, name, interval, auto_reconnect=False):
     delay = interval
+    attempted = False
+    frozen = load_profiles(config).get(name) if auto_reconnect else None
+    if auto_reconnect and frozen is None:
+        raise Error("watched profile was removed; stopping")
+    client_stamp = client_identity(frozen) if auto_reconnect else None
     identity = lambda state: tuple(state.get(key) for key in ("pid", "started", "binary", "utun", "ifindex", "log_guard"))
     with state_directory(human().pw_uid) as directory:
         initial = read_state(directory, name)
@@ -661,12 +732,27 @@ def watch(config, name, interval):
                 raise Error("watched tunnel changed; restart watch explicitly after inspection")
             if not owns_process(directory, name, state):
                 raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
-            require_lifetime(directory, name, state)
-            plan = route_plan(profile, state, desired)
-            if plan["add"] or plan["remove"] or plan["conflicts"]:
-                if not owns_process(directory, name, state):
-                    raise Error("process identity changed; stopping watch")
-                pin_routes(directory, profile, state, desired)
+            try:
+                require_lifetime(directory, name, state)
+            except ContinuityError:
+                if not auto_reconnect:
+                    raise
+                if attempted:
+                    raise Error("automatic reconnect attempt exhausted; inspect and restart watch explicitly")
+                if profile != frozen:
+                    raise Error("watched profile changed; refusing automatic reconnect")
+                attempted = True
+                try:
+                    state = restart_owned(directory, config, frozen, state, desired, client_stamp)
+                except (Error, OSError) as error:
+                    raise Error("automatic reconnect failed; inspect " + str(state_path(directory, name)) + ": " + str(error)) from error
+                expected = identity(state)
+            else:
+                plan = route_plan(profile, state, desired)
+                if plan["add"] or plan["remove"] or plan["conflicts"]:
+                    if not owns_process(directory, name, state):
+                        raise Error("process identity changed; stopping watch")
+                    pin_routes(directory, profile, state, desired)
         delay = interval
         time.sleep(interval)
 
@@ -683,6 +769,7 @@ def main(argv=None):
             subparser.add_argument("args", nargs=argparse.REMAINDER)
         if command == "watch":
             subparser.add_argument("--interval", type=float, default=30)
+            subparser.add_argument("--auto-reconnect", action="store_true", help="allow one checked restart after tunnel continuity loss")
         if command == "doctor":
             subparser.add_argument("--port", type=int)
         if command == "validate":
@@ -746,7 +833,7 @@ def main(argv=None):
         show_plan(snapshot_directory(human().pw_uid), profiles[args.profile])
         return
     if args.command == "watch":
-        watch(config, args.profile, args.interval)
+        watch(config, args.profile, args.interval, args.auto_reconnect)
         return
     with state_directory(human().pw_uid) as directory:
         selected = list(profiles) if args.profile == "all" or args.profile is None else [args.profile]
