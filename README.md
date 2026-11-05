@@ -4,7 +4,7 @@ Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them
 
 This is an early public candidate. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
 
-The 0.2.0-rc.3 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
+The 0.2.0-rc.4 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
 
 ## Requirements
 
@@ -105,6 +105,8 @@ Only use trusted OpenVPN configurations: they run with elevated privileges and c
 Runtime state, generated wrappers, and OpenVPN logs live under the root-owned `/var/run/vpn-pin/<uid>` directory. Process identity is checked using the recorded command path, start time, PID, and wrapper path before signaling, including after OpenVPN drops privileges. The command path comes from process arguments rather than independent executable-image verification. If a stale process record still has routes, cleanup stops for manual inspection rather than deleting potentially unrelated routes. An unfinished route journal also stops automatic operations: its `pending_routes` are possible affected routes, not proof of ownership. Inspect the reported state file and routing table before manual recovery; do not clear intent or remove a route until its ownership is established.
 
 State is lost on reboot. Startup interface detection relies on OpenVPN's standard English log message. A failed startup leaves diagnostic logs; `down` can recover a recorded unfinished startup. Reconnect stops the tunnel before starting it, so startup failure leaves that profile down.
+
+If sleep or a network change closes and recreates the tunnel interface, watch stops for inspection; it does not adopt the replacement interface. After inspection, reconnect explicitly. `down` can stop the positively identified process when its recorded host routes are confirmed absent, without deleting any routes. Existing routes still require verified tunnel continuity; failed or malformed route lookups stop cleanup.
 
 macOS can reuse interface names and indexes. The tool also keeps a checkpoint of its append-only OpenVPN log and rejects later close/reopen signals, rotation, truncation, or rewritten startup content before route changes. Continuity checks stop if the log exceeds 4 MiB; inspect and restart the session explicitly. This assumes the trusted OpenVPN configuration does not disable or redirect lifecycle logging.
 

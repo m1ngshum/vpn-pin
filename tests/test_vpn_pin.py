@@ -226,9 +226,22 @@ class StateAndProcess(unittest.TestCase):
         profile = vpn.Profile("work", Path("/client.ovpn"), [], "development", "")
         with patch.object(vpn.sys, "platform", "darwin"), patch.object(vpn, "load_profiles", return_value={"work": profile}), \
                 patch.object(vpn, "executable", return_value="/stub/kubectl"), patch.object(vpn.os, "geteuid", return_value=501), \
+                patch.dict(vpn.os.environ, {"PATH": "/fixture/bin:/usr/bin:/bin"}), \
                 patch.object(vpn.os, "execv", side_effect=RuntimeError("exec")) as execute, self.assertRaises(RuntimeError):
             vpn.main(["kube", "work", "--", "exec", "-it", "pod", "--", "sh"])
-        self.assertEqual(execute.call_args.args, ("/stub/kubectl", ["/stub/kubectl", "--context=development", "exec", "-it", "pod", "--", "sh"]))
+        self.assertEqual(execute.call_args.args, ("/usr/bin/env", ["/usr/bin/env", "PATH=/fixture/bin:/usr/bin:/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin", "/stub/kubectl", "--context=development", "exec", "-it", "pod", "--", "sh"]))
+
+    def test_kube_credential_path_is_set_after_dropping_privileges(self):
+        profile = vpn.Profile("work", Path("/client.ovpn"), [], "development", "cloud")
+        user = type("User", (), {"pw_uid": 501, "pw_name": "fixture", "pw_dir": "/fixture"})()
+        with patch.object(vpn.sys, "platform", "darwin"), patch.object(vpn, "load_profiles", return_value={"work": profile}), \
+                patch.object(vpn, "executable", side_effect=lambda name: "/stub/" + name), patch.object(vpn, "human", return_value=user), \
+                patch.object(vpn.os, "geteuid", return_value=0), patch.dict(vpn.os.environ, {"PATH": "/usr/bin:/bin"}), \
+                patch.object(vpn.os, "execv", side_effect=RuntimeError("exec")) as execute, self.assertRaises(RuntimeError):
+            vpn.main(["kube", "work", "--", "auth", "whoami"])
+        command = execute.call_args.args[1]
+        self.assertEqual(command[:7], ["/usr/bin/sudo", "-H", "-u", "fixture", "--", "/usr/bin/env", "PATH=/usr/bin:/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin"])
+        self.assertEqual(command[7:], ["/stub/aws-vault", "exec", "cloud", "--", "/stub/kubectl", "--context=development", "auth", "whoami"])
 
     def test_default_route_is_fallback_and_host_route_is_exact(self):
         with patch.object(vpn, "run", return_value="destination: default\nflags: <UP,GATEWAY,DONE>\ninterface: utun9"):
@@ -287,6 +300,59 @@ class StateAndProcess(unittest.TestCase):
                 patch.object(vpn.os, "kill") as kill, self.assertRaises(vpn.Error):
             vpn.down(Path("/state"), "work")
         kill.assert_not_called()
+
+    def test_down_stops_owned_process_when_recorded_routes_are_confirmed_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
+            vpn.state_path(directory, "work").write_text("{}")
+            with patch.object(vpn, "read_state", return_value=state), \
+                    patch.object(vpn, "owns_process", side_effect=[True, True, False]), \
+                    patch.object(vpn, "exact_route", return_value=None), \
+                    patch.object(vpn, "require_lifetime", side_effect=vpn.Error("lifecycle changed")) as lifetime, \
+                    patch.object(vpn, "remove_route") as remove, patch.object(vpn.os, "kill") as kill, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                vpn.down(directory, "work")
+            lifetime.assert_not_called()
+            remove.assert_not_called()
+            kill.assert_called_once_with(123, signal.SIGTERM)
+            self.assertFalse(vpn.state_path(directory, "work").exists())
+
+    def test_down_preserves_routes_and_process_when_ownership_or_lookup_is_uncertain(self):
+        for route, error in [("utun42", None), ("utun99", None), (None, vpn.Error("route lookup failed"))]:
+            with self.subTest(route=route, error=error):
+                state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
+                with patch.object(vpn, "read_state", return_value=state), patch.object(vpn, "owns_process", return_value=True), \
+                        patch.object(vpn, "exact_route", return_value=route, side_effect=error), \
+                        patch.object(vpn, "require_lifetime", side_effect=vpn.Error("lifecycle changed")), \
+                        patch.object(vpn, "remove_route") as remove, patch.object(vpn, "save_state") as save, \
+                        patch.object(vpn.os, "kill") as kill, self.assertRaises(vpn.Error):
+                    vpn.down(Path("/state"), "work")
+                self.assertEqual(state["routes"], ["192.0.2.1"])
+                remove.assert_not_called()
+                save.assert_not_called()
+                kill.assert_not_called()
+
+    def test_failed_or_malformed_route_lookup_cannot_prove_absence(self):
+        with patch.object(vpn, "run", side_effect=vpn.Error("route lookup failed")) as lookup, self.assertRaises(vpn.Error):
+            vpn.exact_route("192.0.2.1")
+        lookup.assert_called_once_with(["/sbin/route", "-n", "get", "192.0.2.1"])
+        for output in ("", "destination: default\ninterface: utun9", "flags: <UP,HOST>\ninterface: utun9",
+                       "destination: default\ninterface: utun9\nflags: <UP,,DONE>"):
+            with self.subTest(output=output), patch.object(vpn, "run", return_value=output), self.assertRaises(vpn.Error):
+                vpn.exact_route("192.0.2.1")
+
+    def test_down_does_not_delete_foreign_route_even_with_valid_lifetime(self):
+        state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
+        with patch.object(vpn, "read_state", return_value=state), patch.object(vpn, "owns_process", return_value=True), \
+                patch.object(vpn, "exact_route", return_value="utun99"), patch.object(vpn, "require_lifetime"), \
+                patch.object(vpn, "run") as route_command, patch.object(vpn, "save_state") as save, \
+                patch.object(vpn.os, "kill") as kill, self.assertRaisesRegex(vpn.Error, "ownership changed"):
+            vpn.down(Path("/state"), "work")
+        route_command.assert_not_called()
+        save.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(state["routes"], ["192.0.2.1"])
 
     def test_unfinished_journal_blocks_automatic_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:

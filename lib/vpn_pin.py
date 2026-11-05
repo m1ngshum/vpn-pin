@@ -297,13 +297,16 @@ def owns_process(directory, name, state):
 
 
 def exact_route(ip):
-    output = run(["/sbin/route", "-n", "get", ip], check=False)
+    output = run(["/sbin/route", "-n", "get", ip])
     fields = {}
     for line in output.splitlines():
         if ":" in line:
             key, value = line.strip().split(":", 1)
             fields[key] = value.strip()
-    flags = set(fields.get("flags", "").strip("<>").split(","))
+    if (not fields.get("destination") or not fields.get("interface")
+            or not re.fullmatch(r"<[A-Z0-9_]+(?:,[A-Z0-9_]+)*>", fields.get("flags", ""))):
+        raise Error("cannot determine route ownership for " + ip + "; malformed route lookup")
+    flags = set(fields["flags"].strip("<>").split(","))
     # macOS caches fallback lookups as cloned host routes; these are not explicit pins.
     if fields.get("destination") == ip and "HOST" in flags and "WASCLONED" not in flags:
         return fields.get("interface")
@@ -518,11 +521,10 @@ def down(directory, name):
         clean_stale(directory, name, state)
         print(name + " stale state cleared; no process killed")
         return
-    if state["routes"]:
-        require_lifetime(directory, name, state)
     for ip in list(state["routes"]):
-        require_lifetime(directory, name, state)
-        remove_route(ip, state["utun"])
+        if exact_route(ip) is not None:
+            require_lifetime(directory, name, state)
+            remove_route(ip, state["utun"])
         state["routes"].remove(ip)
         save_state(directory, name, state)
     if not owns_process(directory, name, state):
@@ -727,6 +729,8 @@ def main(argv=None):
         command += args.args[1:] if args.args[:1] == ["--"] else args.args
         if profile.aws_profile:
             command = [executable("aws-vault"), "exec", profile.aws_profile, "--"] + command
+        # kubectl credential plugins also need Homebrew tools when sudo restricts PATH.
+        command = ["/usr/bin/env", "PATH=" + os.environ.get("PATH", os.defpath) + ":/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin"] + command
         user = human()
         if os.geteuid() == 0 and user.pw_uid != 0:
             command = ["/usr/bin/sudo", "-H", "-u", user.pw_name, "--"] + command
