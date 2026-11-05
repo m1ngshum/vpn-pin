@@ -293,6 +293,14 @@ class AutoWatch(unittest.TestCase):
 
 
 class RecoveryGuards(unittest.TestCase):
+    def test_cli_forwards_opt_in_flag_without_starting_a_tunnel(self):
+        profile = vpn.Profile("work", Path("/fixture/client.ovpn"), ["192.0.2.1"], "", "")
+        with patch.object(vpn.sys, "platform", "darwin"), patch.object(vpn.os, "geteuid", return_value=0), \
+                patch.object(vpn, "load_profiles", return_value={"work": profile}), patch.object(vpn.os, "umask"), \
+                patch.object(vpn, "watch") as watch:
+            vpn.main(["--config", "/fixture/profiles.conf", "watch", "work", "--interval", "5", "--auto-reconnect"])
+        watch.assert_called_once_with(Path("/fixture/profiles.conf"), "work", 5.0, True)
+
     def test_client_metadata_changes_and_non_files_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "client.ovpn"
