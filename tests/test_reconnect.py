@@ -127,6 +127,22 @@ class RestartOwned(unittest.TestCase):
         self.down.assert_called_once()
         self.up.assert_not_called()
 
+    def test_configuration_changed_during_start_is_not_adopted(self):
+        for changed in ("profile", "client"):
+            with self.subTest(changed=changed):
+                self.started = False
+                self.up.reset_mock()
+                self.down.reset_mock()
+                self.read.side_effect = [copy.deepcopy(self.old), copy.deepcopy(self.new)]
+                self.life.side_effect = [vpn.ContinuityError("closed"), None]
+                self.profiles.side_effect = lambda *args: {} if self.started and changed == "profile" else {"work": self.profile}
+                self.client.side_effect = lambda *args: "changed" if self.started and changed == "client" else "stamp"
+                with self.assertRaisesRegex(vpn.Error, "configuration changed"):
+                    self.restart()
+                self.up.assert_called_once()
+                self.down.assert_called_once()
+                self.assertTrue(self.started)
+
     def test_failed_stop_or_start_is_not_retried(self):
         self.down.side_effect = vpn.Error("stop refused")
         with self.assertRaisesRegex(vpn.Error, "stop refused"):
@@ -184,22 +200,31 @@ class RestartOwned(unittest.TestCase):
     def test_real_stop_requires_positive_process_exit_before_fresh_start(self):
         self.old["routes"] = []
         self.down.side_effect = self.real_down
-        for probe_error in (None, PermissionError("denied"), OSError("inspection failed"), ProcessLookupError("gone")):
-            with self.subTest(probe_error=probe_error), tempfile.TemporaryDirectory() as temporary:
+        cases = [([None] * 50, False), ([PermissionError("denied")], False),
+                 ([OSError("inspection failed")], False), ([ProcessLookupError("gone")], True),
+                 ([None, None, ProcessLookupError("reaped")], True)]
+        for probes, exited in cases:
+            with self.subTest(probes=probes), tempfile.TemporaryDirectory() as temporary:
                 path = Path(temporary) / "work.json"
                 path.write_text("retained state")
                 self.started = False
                 self.up.reset_mock()
                 self.read.side_effect = lambda *args: copy.deepcopy(self.new if self.started else self.old)
-                self.owns.side_effect = [True, True, True, False, True]
+                signaled = [False]
+                self.owns.side_effect = lambda *args: not signaled[0] or self.started
                 self.life.side_effect = [vpn.ContinuityError("closed"), None]
+                remaining = iter(probes)
                 def signal_process(pid, sig):
-                    if sig == 0 and probe_error is not None:
-                        raise probe_error
+                    if sig == signal.SIGTERM:
+                        signaled[0] = True
+                    elif sig == 0:
+                        error = next(remaining)
+                        if error is not None:
+                            raise error
                 with patch.object(vpn, "checked_log_tail", return_value=b"closed"), \
-                        patch.object(vpn, "state_path", return_value=path), \
+                        patch.object(vpn, "state_path", return_value=path), patch.object(vpn.time, "sleep") as sleep, \
                         patch.object(vpn.os, "kill", side_effect=signal_process) as kill:
-                    if isinstance(probe_error, ProcessLookupError):
+                    if exited:
                         self.assertEqual(self.restart(), self.new)
                         self.assertFalse(path.exists())
                         self.up.assert_called_once()
@@ -208,7 +233,9 @@ class RestartOwned(unittest.TestCase):
                             self.restart()
                         self.up.assert_not_called()
                         self.assertTrue(path.exists())
-                self.assertEqual([call.args for call in kill.call_args_list], [(123, signal.SIGTERM), (123, 0)])
+                self.assertEqual([call.args for call in kill.call_args_list],
+                                 [(123, signal.SIGTERM)] + [(123, 0)] * len(probes))
+                self.assertEqual(sleep.call_count, sum(error is None for error in probes))
 
     def test_real_stop_rechecks_log_after_its_own_confirmed_route_pruning(self):
         for message in ("termination requested", "log was replaced"):

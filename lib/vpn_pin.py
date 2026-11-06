@@ -558,16 +558,18 @@ def down(directory, name, expected=None):
         raise Error("process identity changed; refusing to send a signal")
     os.kill(state["pid"], signal.SIGTERM)
     for _ in range(50):
-        if not owns_process(directory, name, state):
-            if expected is not None:
-                try:
-                    os.kill(state["pid"], 0)
-                except ProcessLookupError:
-                    pass
-                except OSError as error:
-                    raise Error("cannot confirm process exit; state retained for " + name) from error
-                else:
-                    raise Error("process still exists without verified ownership; state retained for " + name)
+        if expected is not None:
+            try:
+                os.kill(state["pid"], 0)
+            except ProcessLookupError:
+                stopped = True
+            except OSError as error:
+                raise Error("cannot confirm process exit; state retained for " + name) from error
+            else:
+                stopped = False
+        else:
+            stopped = not owns_process(directory, name, state)
+        if stopped:
             state_path(directory, name).unlink()
             print(name + " stopped")
             return
@@ -713,6 +715,7 @@ def restart_owned(directory, config, profile, state, desired, client_stamp):
     require_lifetime(directory, profile.name, current)
     if set(current["routes"]) != set(desired) or any(exact_route(ip) != current["utun"] for ip in desired):
         raise Error("new tunnel routes are not verified; inspect before recovery")
+    unchanged()
     return current
 
 
