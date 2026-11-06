@@ -1,4 +1,15 @@
-# vpn-pin 0.2.0-rc.4
+# vpn-pin 0.2.0-rc.5
+
+- Add opt-in `watch --auto-reconnect` for one bounded restart after verified tunnel continuity loss. Recovery requires the original positively owned process, intact lifecycle logging, unchanged configuration, and conclusively absent target routes. It confirms the old PID has exited and accepts only the fresh session it creates; default watch remains conservative.
+- Add explicit foreground `api-pf PROFILE` for API-only IPv4 TCP 443 PF exceptions on a verified tunnel interface/source and frozen target addresses. It requires an existing enabled PF policy and anchor hook; it never reloads root PF rules or enables/disables PF. Unfinished PF journals block route/lifecycle changes, including automatic reconnect.
+- Bind permissions to a root-private journal and an independent runtime reference. Revoke exact owned rules and scoped connection states before tunnel teardown. Changed ownership, foreign rules, and uncertain cleanup retain recovery evidence and stop teardown rather than adopting a replacement interface.
+- Document command-scoped macOS credential prompts with `AWS_VAULT_PROMPT=osascript` for Kubernetes commands using aws-vault.
+- All 121 mocked regression tests passed on Python 3.9 and 3.14. Astra reviewed the implementation and completed live-test evidence with no remaining findings.
+- Bounded live checks on the released runtime passed for three profiles: certificate-verified TLS at six API addresses, authenticated identity, and read-only namespace requests. All foreground supervisors exited successfully; API clients, owned permissions/states, tunnels, and routes were cleaned. Default routing, root PF policy, process baseline, and private profile bytes/mode were preserved; an independent cleanup retry also passed.
+
+This remains a prerelease. No additional sleep/wake cycle was run on this final runtime; earlier recovery-candidate sleep results do not establish final-release sleep compatibility. PF supervision is periodic, not a kernel binding to process identity: SIGKILL or an unclean supervisor exit may leave permissions/journals until explicit `down` or operator inspection. PF targets stay frozen, and PF-managed profiles do not automatically reconnect. Bounded checks do not establish compatibility with every macOS or VPN configuration.
+
+# Previous: 0.2.0-rc.4
 
 - Make Homebrew credential helpers available to Kubernetes commands under a restricted PATH, preserving existing PATH precedence and applying the environment after privilege drop.
 - Allow explicit cleanup of a positively identified tunnel process when recorded host routes are conclusively absent. Existing routes still require verified tunnel continuity and ownership; failed or malformed lookups preserve state and stop cleanup.

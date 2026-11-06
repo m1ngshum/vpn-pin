@@ -4,7 +4,7 @@ Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them
 
 This is an early public candidate. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
 
-The 0.2.0-rc.4 prerelease adds diagnostics, route previews, profile setup, and opt-in DNS refresh monitoring.
+The 0.2.0-rc.5 prerelease adds explicit, ownership-checked automatic recovery and foreground API-only PF permissions. The latest runtime passed bounded authenticated API and cleanup checks on three profiles; final-runtime sleep/wake compatibility remains unverified. See [release notes](docs/RELEASE_NOTES.md) for evidence and limits.
 
 ## Requirements
 
@@ -79,6 +79,7 @@ vpn-pin status
 vpn-pin plan work
 vpn-pin refresh work
 vpn-pin watch work --interval 30
+vpn-pin watch work --interval 30 --auto-reconnect
 vpn-pin down work
 vpn-pin reconnect work
 vpn-pin doctor
@@ -86,27 +87,52 @@ sudo vpn-pin doctor work --port 443
 vpn-pin kube cluster -- get namespaces
 ```
 
-Tunnel commands and status request sudo when needed. Kubernetes commands run as your user, inherit the terminal, and preserve the command's exit status. `down all` and `reconnect all` operate on all configured profiles. Stop a profile before removing or renaming it in the configuration.
+Tunnel commands and status request sudo when needed. Kubernetes commands run as your user, inherit the terminal, and preserve the command's exit status. When an aws-vault profile needs a macOS dialog instead of terminal input, use `AWS_VAULT_PROMPT=osascript vpn-pin kube cluster -- get namespaces` and complete Keychain/MFA prompts locally. This sets the prompt driver only for that command. `down all` and `reconnect all` operate on all configured profiles. Stop a profile before removing or renaming it in the configuration.
 
 `plan` is a read-only snapshot of additions, removals, and conflicts; it creates no runtime state. When a tunnel is down, it previews destinations that need a tunnel. Refresh calculates a new plan under its lock and never treats an earlier preview as permission to overwrite another route.
 
 `doctor` checks dependencies, configuration metadata, DNS, default routing, and available process/host-route ownership. Run it with sudo to inspect private runtime state. TCP checks are opt-in with `--port`, have a two-second connection timeout per IP, and are skipped without a verified tunnel and owned route. A successful connection proves TCP reachability only; it does not verify authentication, TLS, or application health.
 
-`watch` runs in the foreground on one already-initialized tunnel and binds to its initial process, interface index, and private log checkpoint. Each tick reloads its profile, resolves current IPv4 targets, then rechecks process and route ownership under the lock before refreshing. Lookups and waits happen outside the lock. DNS failures preserve routes and retry with capped backoff; conflicts, stale processes, changed process/interface identity, tunnel close/reopen events, lost log continuity, removed profiles, or unfinished journals stop watching for inspection. Ctrl-C leaves the tunnel running. It never starts or stops tunnels automatically. OpenVPN's own reconnect behavior can recover its existing tunnel after a network interruption; watch restores missing host routes when that same owned tunnel remains initialized. Start another watch explicitly after manual tunnel restart. Intervals must be 5–3600 seconds.
+`watch` runs in the foreground on one already-initialized tunnel and binds to its initial process, interface index, and private log checkpoint. Each tick reloads its profile, resolves current IPv4 targets, then rechecks process and route ownership under the lock before refreshing. DNS and normal polling/backoff happen outside the lock. DNS failures preserve routes and retry with capped backoff; conflicts, stale processes, changed process/interface identity, tunnel close/reopen events, lost log continuity, removed profiles, or unfinished journals stop watching for inspection. Ctrl-C leaves the tunnel running. Without `--auto-reconnect`, it never starts or stops tunnels automatically. OpenVPN's own reconnect behavior can recover its existing tunnel after a network interruption; watch restores missing host routes when that same owned tunnel remains initialized. Start another watch explicitly after manual tunnel restart. Intervals must be 5–3600 seconds.
+
+
+Opt in with `watch work --auto-reconnect` to allow one automatic restart after verified continuity loss following sleep or a network reset. The original process must still be positively owned, its log history intact, its profile and client-file metadata unchanged, and every recorded and newly resolved target host route conclusively absent. Termination signals, inspection errors, changed state, conflicts, and unfinished journals stop recovery. The mode stops the owned process, confirms its PID is absent, and starts a fresh session with new process/interface/log checks; it never adopts a replacement interface. A second continuity loss requires inspection and an explicit new watch. Failed or interrupted startup retains its diagnostic state for inspection and explicit cleanup.
+
+DNS and normal watch delays stay outside the lock. The bounded automatic stop/start transition holds the global lock to exclude racing lifecycle commands. Ctrl-C during that transition may leave the profile stopped or with unfinished startup state.
 
 `refresh` resolves replacement addresses before changing routes. It refuses conflicting explicit host routes, records mutation intent, adds new routes first, and attempts rollback if a change fails or is interrupted. macOS fallback-cache entries marked `WASCLONED` are not explicit pins; deliberate host routes, including scoped/static routes, remain protected. Failed rollback records the routes that remain. `status` checks the recorded process identity and marks routes whose interface is missing or changed; it does not prove endpoint reachability.
 
+## Opt-in API firewall exceptions
+
+For an explicitly permitted API-over-VPN setup whose host PF policy blocks the profile tunnel, run:
+
+```sh
+vpn-pin up work
+vpn-pin api-pf work
+# In another terminal:
+vpn-pin kube work -- get namespaces
+vpn-pin down work
+```
+
+`api-pf` stays in the foreground and periodically supervises the original process, log, interface index, IPv4 source address, target routes, and its exact PF rules. It grants only IPv4 TCP 443 from that source, through that interface, to the profile's frozen target addresses. It requires PF to be enabled already, an existing `main/*` anchor hook, and an empty PF state table on the owned interface. It never enables/disables PF, reloads the root ruleset, changes Nord settings, or changes the default route. It supports neither other ports nor automatic firewall setup.
+
+Keep the foreground command running. Ctrl-C revokes its rules and matching states while leaving the tunnel up. `down` performs that revocation before removing routes or signaling the process; the foreground command then exits. State removal is scoped to interface/source/destination pairs across all protocols and ports, so it closes matching API connections on that owned interface. The initial empty-state requirement prevents taking ownership of existing connections.
+
+While its PF journal is unfinished, ordinary `up`, `refresh`, `watch` (including automatic reconnect), and `reconnect` refuse changes. Use `down`, then start and opt in again to change the frozen targets. Read-only status, plan, and doctor remain available; status includes the recorded PF phase. Closed root-private receipts remain alongside runtime state.
+
+This is periodic supervision, not a kernel binding to the OpenVPN process. SIGKILL, a supervisor crash, or an unclean exit may leave rules and a recovery journal until `down` or operator inspection. An independent reference in runtime state makes a missing or replaced PF journal block ordinary lifecycle changes. Never delete a PF journal to bypass recovery. If interface/process/log ownership is lost, exactly owned rules can still be revoked, but saved interface names are never used to delete states on an unverified replacement. Cleanup failures retain the journal and stop tunnel teardown; manual inspection may be necessary. Foreign anchor contents are never flushed. A lifecycle failure must not be treated as successful cleanup.
+
 ## Routing and recovery
 
-vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. It does not configure DNS, alter kill switches, or add IPv6 routes. DNS monitoring requires an explicitly running `watch`; ordinary `up`/`refresh` are one-shot commands. DNS subprocesses time out after ten seconds per hostname; other captured subprocesses time out after thirty seconds.
+vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. By default it does not configure DNS, alter kill switches, or add IPv6 routes; the explicit `api-pf` mode above grants its documented API-only PF exceptions. DNS monitoring requires an explicitly running `watch`; ordinary `up`/`refresh` are one-shot commands. DNS subprocesses time out after ten seconds per hostname; other captured subprocesses time out after thirty seconds.
 
-Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings.
+Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings by default. The explicit, foreground `api-pf` mode above can add narrowly scoped PF exceptions.
 
 Runtime state, generated wrappers, and OpenVPN logs live under the root-owned `/var/run/vpn-pin/<uid>` directory. Process identity is checked using the recorded command path, start time, PID, and wrapper path before signaling, including after OpenVPN drops privileges. The command path comes from process arguments rather than independent executable-image verification. If a stale process record still has routes, cleanup stops for manual inspection rather than deleting potentially unrelated routes. An unfinished route journal also stops automatic operations: its `pending_routes` are possible affected routes, not proof of ownership. Inspect the reported state file and routing table before manual recovery; do not clear intent or remove a route until its ownership is established.
 
 State is lost on reboot. Startup interface detection relies on OpenVPN's standard English log message. A failed startup leaves diagnostic logs; `down` can recover a recorded unfinished startup. Reconnect stops the tunnel before starting it, so startup failure leaves that profile down.
 
-If sleep or a network change closes and recreates the tunnel interface, watch stops for inspection; it does not adopt the replacement interface. After inspection, reconnect explicitly. `down` can stop the positively identified process when its recorded host routes are confirmed absent, without deleting any routes. Existing routes still require verified tunnel continuity; failed or malformed route lookups stop cleanup.
+If sleep or a network change closes and recreates the tunnel interface, default watch stops for inspection; it does not adopt the replacement interface. Reconnect explicitly after inspection, or opt in to the bounded `--auto-reconnect` mode above. `down` can stop the positively identified process when its recorded host routes are confirmed absent, without deleting any routes. Existing routes still require verified tunnel continuity; failed or malformed route lookups stop cleanup.
 
 macOS can reuse interface names and indexes. The tool also keeps a checkpoint of its append-only OpenVPN log and rejects later close/reopen signals, rotation, truncation, or rewritten startup content before route changes. Continuity checks stop if the log exceeds 4 MiB; inspect and restart the session explicitly. This assumes the trusted OpenVPN configuration does not disable or redirect lifecycle logging.
 

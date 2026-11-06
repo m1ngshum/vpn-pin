@@ -306,7 +306,7 @@ class StateAndProcess(unittest.TestCase):
             directory = Path(temporary)
             state = {"pid": 123, "utun": "utun42", "routes": ["192.0.2.1"]}
             vpn.state_path(directory, "work").write_text("{}")
-            with patch.object(vpn, "read_state", return_value=state), \
+            with patch.object(vpn.api_pf, "private_file", side_effect=lambda p: p.stat()), patch.object(vpn, "read_state", return_value=state), \
                     patch.object(vpn, "owns_process", side_effect=[True, True, False]), \
                     patch.object(vpn, "exact_route", return_value=None), \
                     patch.object(vpn, "require_lifetime", side_effect=vpn.Error("lifecycle changed")) as lifetime, \
@@ -391,7 +391,7 @@ class StateAndProcess(unittest.TestCase):
                 values["comm"] = "/other/openvpn"
                 self.assertFalse(vpn.owns_process(root, "work", saved[-1]))
                 values["comm"] = "/stub/openvpn"
-                with patch.object(vpn, "read_state", return_value=saved[-1]), \
+                with patch.object(vpn.api_pf, "private_file", side_effect=lambda p: p.stat()), patch.object(vpn, "read_state", return_value=saved[-1]), \
                         patch.object(vpn.os, "kill", side_effect=lambda pid, sig: values.update(command="")) as kill, \
                         contextlib.redirect_stdout(io.StringIO()):
                     vpn.down(root, "work")
