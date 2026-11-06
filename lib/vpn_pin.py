@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+import vpn_pin_pf as api_pf
+
 VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
 
 
@@ -394,6 +396,7 @@ def require_lifetime(directory, name, state):
 
 
 def pin_routes(directory, profile, state, desired=None):
+    api_pf.guard(directory, profile.name)
     if not isinstance(state["utun"], str) or not re.fullmatch(r"utun[0-9]+", state["utun"]):
         raise Error(profile.name + " has unfinished startup state; run down before retrying")
     require_lifetime(directory, profile.name, state)
@@ -453,12 +456,14 @@ def pin_routes(directory, profile, state, desired=None):
 
 
 def clean_stale(directory, name, state):
+    api_pf.guard(directory, name)
     if any(exact_route(ip) == state["utun"] for ip in state["routes"]):
         raise Error("stale process state still has routes; inspect before manual cleanup: " + str(directory))
     state_path(directory, name).unlink()
 
 
 def wrapper(directory, profile):
+    api_pf.guard(directory, profile.name)
     if not profile.ovpn.is_file():
         raise Error("OpenVPN configuration not found: " + str(profile.ovpn))
     path = directory / (profile.name + ".conf")
@@ -473,6 +478,7 @@ def wrapper(directory, profile):
 
 
 def up(directory, profile, desired=None):
+    api_pf.guard(directory, profile.name)
     state = read_state(directory, profile.name)
     if state and desired is not None:
         raise Error("runtime state appeared before fresh startup; inspect before recovery")
@@ -530,6 +536,11 @@ def up(directory, profile, desired=None):
 
 
 def down(directory, name, expected=None):
+    permission = api_pf.load(directory, name)
+    api_pf.require_reference(directory, name, permission)
+    if permission:
+        api_pf.revoke(directory, name, permission,
+                      lambda: require_pf_session(directory, name, permission["session"], permission["source"], permission["token"]))
     state = read_state(directory, name)
     if expected is not None and state != expected:
         raise Error("runtime state changed before automatic stop; inspect before recovery")
@@ -682,6 +693,7 @@ def client_identity(profile):
 
 
 def restart_owned(directory, config, profile, state, desired, client_stamp):
+    api_pf.guard(directory, profile.name)
     if read_state(directory, profile.name) != state or not owns_process(directory, profile.name, state):
         raise Error("runtime process or state changed; refusing automatic reconnect")
     try:
@@ -728,6 +740,7 @@ def watch(config, name, interval, auto_reconnect=False):
     client_stamp = client_identity(frozen) if auto_reconnect else None
     identity = lambda state: tuple(state.get(key) for key in ("pid", "started", "binary", "utun", "ifindex", "log_guard"))
     with state_directory(human().pw_uid) as directory:
+        api_pf.guard(directory, name)
         initial = read_state(directory, name)
         if not initial or not owns_process(directory, name, initial) or initial["utun"] is None:
             raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
@@ -747,6 +760,7 @@ def watch(config, name, interval, auto_reconnect=False):
             delay = min(max(300, interval), delay * 2)
             continue
         with state_directory(human().pw_uid) as directory:
+            api_pf.guard(directory, name)
             state = read_state(directory, name)
             if not state or identity(state) != expected:
                 raise Error("watched tunnel changed; restart watch explicitly after inspection")
@@ -777,12 +791,91 @@ def watch(config, name, interval, auto_reconnect=False):
         time.sleep(interval)
 
 
+def require_pf_session(directory, name, expected, source=None, token=None):
+    state = read_state(directory, name)
+    if (not state or (token is not None and state.get("pf_token") != token)
+            or any(state.get(key) != value for key, value in expected.items())
+            or not owns_process(directory, name, state)):
+        raise Error("PF tunnel process/state changed; refusing interface adoption")
+    require_lifetime(directory, name, state)
+    if not state["routes"] or any(exact_route(ip) != state["utun"] for ip in state["routes"]):
+        raise Error("PF target route ownership changed; inspect before state cleanup")
+    if source is not None and api_pf.source_address(state) != source:
+        raise Error("PF source address changed; inspect before state cleanup")
+    return state
+
+
+def supervise_api_pf(config, name):
+    def interrupt(*args):
+        raise KeyboardInterrupt()
+    signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    handlers = {sig: signal.signal(sig, interrupt) for sig in signals}
+    mask = signal.pthread_sigmask(signal.SIG_UNBLOCK, set(signals))
+    permission = None
+    try:
+        profile = load_profiles(config)[name]
+        stamp = client_identity(profile)
+        desired = resolve_ips(profile)
+        with state_directory(human().pw_uid) as directory:
+            state = read_state(directory, name)
+            if not state or state["utun"] is None:
+                raise Error("api-pf requires an initialized owned tunnel; run up first")
+            require_pf_session(directory, name, state)
+            if set(state["routes"]) != set(desired):
+                raise Error("PF targets differ from current resolution; run down/up before opting in")
+            def verify_apply():
+                require_pf_session(directory, name, state)
+                if load_profiles(config).get(name) != profile or client_identity(profile) != stamp:
+                    raise Error("PF profile/client configuration changed before apply")
+            def reserve(record):
+                state["pf_token"] = record["token"]
+                save_state(directory, name, state)
+            grant_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(signals))
+            try:
+                permission = api_pf.enable(directory, name, state, verify_apply, reserve)
+            finally:
+                # Deliver a pending stop only after the caller owns the returned permission.
+                signal.pthread_sigmask(signal.SIG_SETMASK, grant_mask)
+        print("Supervising API TCP 443 PF exceptions for " + name + "; Ctrl-C revokes them and leaves the tunnel running", flush=True)
+        while True:
+            with state_directory(human().pw_uid) as directory:
+                live = api_pf.current(directory, name, permission)
+                if live["phase"] == "closed":
+                    if api_pf.anchor_rules(live):
+                        raise Error("closed PF anchor is no longer empty; inspect before recovery")
+                    return
+                if load_profiles(config).get(name) != profile or client_identity(profile) != stamp:
+                    raise Error("PF profile/client configuration changed; revoking permissions")
+                require_pf_session(directory, name, permission["session"], permission["source"], permission["token"])
+                if api_pf.anchor_rules(live) != live["expected"]:
+                    raise Error("PF permissions changed; inspect before recovery")
+            time.sleep(1)
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, set(signals))
+        try:
+            if permission is not None:
+                with state_directory(human().pw_uid) as directory:
+                    live = api_pf.load(directory, name)
+                    if live is None and api_pf.runtime_token(directory, name) == permission["token"]:
+                        api_pf.restore_for_revocation(directory, name, permission)
+                        live = api_pf.load(directory, name)
+                    if live and live["token"] == permission["token"]:
+                        api_pf.revoke(directory, name, permission,
+                                      lambda: require_pf_session(directory, name, permission["session"], permission["source"], permission["token"]))
+                    elif api_pf.anchor_rules(permission):
+                        raise Error("PF journal replaced while original anchor remains; manual inspection required")
+        finally:
+            for sig, handler in handlers.items():
+                signal.signal(sig, handler)
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="vpn-pin", description=__doc__)
     parser.add_argument("--version", action="version", version="vpn-pin " + VERSION)
     parser.add_argument("--config", type=Path, default=Path(human().pw_dir) / ".config/vpn-pin/profiles.conf")
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("up", "down", "refresh", "reconnect", "status", "plan", "validate", "watch", "doctor", "kube"):
+    for command in ("up", "down", "refresh", "reconnect", "status", "plan", "validate", "watch", "doctor", "kube", "api-pf"):
         subparser = commands.add_parser(command)
         subparser.add_argument("profile", nargs="?" if command in ("status", "doctor", "validate") else None)
         if command == "kube":
@@ -855,6 +948,9 @@ def main(argv=None):
     if args.command == "watch":
         watch(config, args.profile, args.interval, args.auto_reconnect)
         return
+    if args.command == "api-pf":
+        supervise_api_pf(config, args.profile)
+        return
     with state_directory(human().pw_uid) as directory:
         selected = list(profiles) if args.profile == "all" or args.profile is None else [args.profile]
         for name in selected:
@@ -864,18 +960,20 @@ def main(argv=None):
             elif args.command == "down":
                 down(directory, name)
             elif args.command == "reconnect":
+                api_pf.guard(directory, name)
                 down(directory, name)
                 up(directory, profile)
             else:
                 state = read_state(directory, name)
+                permission = api_pf.load(directory, name)
                 running = state is not None and owns_process(directory, name, state)
                 if args.command == "refresh":
                     if not running:
                         raise Error(name + " is not running")
                     pin_routes(directory, profile, state)
                 else:
-                    print("%s\t%s\t%s\t%s" % (name, "up" if running and state["utun"] else "starting" if running else "stale" if state else "down",
-                          state["utun"] or "-" if state else "-", " ".join(ip + ("" if exact_route(ip) == state["utun"] else "(missing/changed)") for ip in state["routes"]) if state else "-"))
+                    print("%s\t%s\t%s\t%s\tPF:%s" % (name, "up" if running and state["utun"] else "starting" if running else "stale" if state else "down",
+                          state["utun"] or "-" if state else "-", " ".join(ip + ("" if exact_route(ip) == state["utun"] else "(missing/changed)") for ip in state["routes"]) if state else "-", permission["phase"] if permission else "off"))
 
 
 if __name__ == "__main__":

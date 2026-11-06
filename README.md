@@ -102,11 +102,31 @@ DNS and normal watch delays stay outside the lock. The bounded automatic stop/st
 
 `refresh` resolves replacement addresses before changing routes. It refuses conflicting explicit host routes, records mutation intent, adds new routes first, and attempts rollback if a change fails or is interrupted. macOS fallback-cache entries marked `WASCLONED` are not explicit pins; deliberate host routes, including scoped/static routes, remain protected. Failed rollback records the routes that remain. `status` checks the recorded process identity and marks routes whose interface is missing or changed; it does not prove endpoint reachability.
 
+## Opt-in API firewall exceptions
+
+For an explicitly permitted API-over-VPN setup whose host PF policy blocks the profile tunnel, run:
+
+```sh
+vpn-pin up work
+vpn-pin api-pf work
+# In another terminal:
+vpn-pin kube work -- get namespaces
+vpn-pin down work
+```
+
+`api-pf` stays in the foreground and periodically supervises the original process, log, interface index, IPv4 source address, target routes, and its exact PF rules. It grants only IPv4 TCP 443 from that source, through that interface, to the profile's frozen target addresses. It requires PF to be enabled already, an existing `main/*` anchor hook, and an empty PF state table on the owned interface. It never enables/disables PF, reloads the root ruleset, changes Nord settings, or changes the default route. It supports neither other ports nor automatic firewall setup.
+
+Keep the foreground command running. Ctrl-C revokes its rules and matching states while leaving the tunnel up. `down` performs that revocation before removing routes or signaling the process; the foreground command then exits. State removal is scoped to interface/source/destination pairs across all protocols and ports, so it closes matching API connections on that owned interface. The initial empty-state requirement prevents taking ownership of existing connections.
+
+While its PF journal is unfinished, ordinary `up`, `refresh`, `watch` (including automatic reconnect), and `reconnect` refuse changes. Use `down`, then start and opt in again to change the frozen targets. Read-only status, plan, and doctor remain available; status includes the recorded PF phase. Closed root-private receipts remain alongside runtime state.
+
+This is periodic supervision, not a kernel binding to the OpenVPN process. SIGKILL, a supervisor crash, or an unclean exit may leave rules and a recovery journal until `down` or operator inspection. An independent reference in runtime state makes a missing or replaced PF journal block ordinary lifecycle changes. Never delete a PF journal to bypass recovery. If interface/process/log ownership is lost, exactly owned rules can still be revoked, but saved interface names are never used to delete states on an unverified replacement. Cleanup failures retain the journal and stop tunnel teardown; manual inspection may be necessary. Foreign anchor contents are never flushed. A lifecycle failure must not be treated as successful cleanup.
+
 ## Routing and recovery
 
 vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. It does not configure DNS, alter kill switches, or add IPv6 routes. DNS monitoring requires an explicitly running `watch`; ordinary `up`/`refresh` are one-shot commands. DNS subprocesses time out after ten seconds per hostname; other captured subprocesses time out after thirty seconds.
 
-Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings.
+Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings by default. The explicit, foreground `api-pf` mode below can add narrowly scoped PF exceptions.
 
 Runtime state, generated wrappers, and OpenVPN logs live under the root-owned `/var/run/vpn-pin/<uid>` directory. Process identity is checked using the recorded command path, start time, PID, and wrapper path before signaling, including after OpenVPN drops privileges. The command path comes from process arguments rather than independent executable-image verification. If a stale process record still has routes, cleanup stops for manual inspection rather than deleting potentially unrelated routes. An unfinished route journal also stops automatic operations: its `pending_routes` are possible affected routes, not proof of ownership. Inspect the reported state file and routing table before manual recovery; do not clear intent or remove a route until its ownership is established.
 
