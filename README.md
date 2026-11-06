@@ -87,7 +87,7 @@ sudo vpn-pin doctor work --port 443
 vpn-pin kube cluster -- get namespaces
 ```
 
-Tunnel commands and status request sudo when needed. Kubernetes commands run as your user, inherit the terminal, and preserve the command's exit status. `down all` and `reconnect all` operate on all configured profiles. Stop a profile before removing or renaming it in the configuration.
+Tunnel commands and status request sudo when needed. Kubernetes commands run as your user, inherit the terminal, and preserve the command's exit status. When an aws-vault profile needs a macOS dialog instead of terminal input, use `AWS_VAULT_PROMPT=osascript vpn-pin kube cluster -- get namespaces` and complete Keychain/MFA prompts locally. This sets the prompt driver only for that command. `down all` and `reconnect all` operate on all configured profiles. Stop a profile before removing or renaming it in the configuration.
 
 `plan` is a read-only snapshot of additions, removals, and conflicts; it creates no runtime state. When a tunnel is down, it previews destinations that need a tunnel. Refresh calculates a new plan under its lock and never treats an earlier preview as permission to overwrite another route.
 
@@ -124,9 +124,9 @@ This is periodic supervision, not a kernel binding to the OpenVPN process. SIGKI
 
 ## Routing and recovery
 
-vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. It does not configure DNS, alter kill switches, or add IPv6 routes. DNS monitoring requires an explicitly running `watch`; ordinary `up`/`refresh` are one-shot commands. DNS subprocesses time out after ten seconds per hostname; other captured subprocesses time out after thirty seconds.
+vpn-pin disables OpenVPN's automatic route execution, including routes in your local client configuration. Only the selected IPv4 host routes are pinned. By default it does not configure DNS, alter kill switches, or add IPv6 routes; the explicit `api-pf` mode above grants its documented API-only PF exceptions. DNS monitoring requires an explicitly running `watch`; ordinary `up`/`refresh` are one-shot commands. DNS subprocesses time out after ten seconds per hostname; other captured subprocesses time out after thirty seconds.
 
-Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings by default. The explicit, foreground `api-pf` mode below can add narrowly scoped PF exceptions.
+Only use trusted OpenVPN configurations: they run with elevated privileges and can enable scripts or plugins that alter the system. Existing VPN kill switches or local-network blocking can prevent another tunnel from working; vpn-pin does not bypass those settings by default. The explicit, foreground `api-pf` mode above can add narrowly scoped PF exceptions.
 
 Runtime state, generated wrappers, and OpenVPN logs live under the root-owned `/var/run/vpn-pin/<uid>` directory. Process identity is checked using the recorded command path, start time, PID, and wrapper path before signaling, including after OpenVPN drops privileges. The command path comes from process arguments rather than independent executable-image verification. If a stale process record still has routes, cleanup stops for manual inspection rather than deleting potentially unrelated routes. An unfinished route journal also stops automatic operations: its `pending_routes` are possible affected routes, not proof of ownership. Inspect the reported state file and routing table before manual recovery; do not clear intent or remove a route until its ownership is established.
 
