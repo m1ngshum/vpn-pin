@@ -15,6 +15,8 @@ The builder reads committed files rather than the working tree. Repeating a buil
 
 Before a stable release, validate a live tunnel on a disposable macOS test system: establish only the selected host routes, confirm the upstream default route stays unchanged, test sleep/network recovery, DNS changes/failures, conflicting routes, Ctrl-C, and complete cleanup. Record macOS/OpenVPN versions and results. Mocked CI does not establish live compatibility. If this check is still pending, publish only as an explicitly labeled prerelease.
 
+Current stable preparation is tracked in [validation status](VALIDATION.md). Keep `VERSION` on the published prerelease while mandatory live qualification remains open. Do not create a stable tag or dispatch the release workflow for preparation work. After qualification, prepare the final `0.2.0` version/notes commit, obtain exact-commit review and green CI, and perform only the separately authorized publication stages.
+
 ## Create a draft after merge
 
 The **Draft release** workflow is manual and restricted to `main`. It reruns tests, builds the exact workflow commit, and creates a draft with all four assets attached. Its job has permission to write release assets; the GitHub CLI token is supplied to draft creation and checkout does not persist credentials. The helper checks artifact checksums and receipt, creates the version tag at that exact commit if absent, and rejects an existing tag pointing elsewhere. It verifies the remote tag before and after draft creation. It never publishes the draft automatically.
