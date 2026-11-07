@@ -6,6 +6,10 @@ This is an early public candidate. Automated tests use mocked routes and process
 
 The 0.2.0-rc.5 prerelease adds explicit, ownership-checked automatic recovery and foreground API-only PF permissions. The latest runtime passed bounded authenticated API and cleanup checks on three profiles; final-runtime sleep/wake compatibility remains unverified. See [release notes](docs/RELEASE_NOTES.md) for evidence and limits.
 
+## Stable-release preparation
+
+Stable `0.2.0` is not published. The current published and installed release remains `0.2.0-rc.5`. See [validation status](docs/VALIDATION.md) for completed checks and remaining release gates; preparing documentation does not waive those gates.
+
 ## Requirements
 
 - macOS and Python 3.9 or newer.
@@ -14,6 +18,17 @@ The 0.2.0-rc.5 prerelease adds explicit, ownership-checked automatic recovery an
 - Optional: `kubectl` for Kubernetes targets; `aws-vault` for the Kubernetes command wrapper.
 
 Python uses only the standard library. The launcher checks Apple Silicon Homebrew, Intel Homebrew, and system Python locations, including when sudo supplies a limited PATH. OpenVPN and optional tools are discovered from PATH or common Homebrew locations.
+
+## Validated configuration
+
+| Component | Evidence |
+| --- | --- |
+| macOS / CPU | Live checks on macOS 27.3, Apple Silicon |
+| Python | Homebrew 3.14.10 for live/installed checks; automated tests on 3.9 and 3.14 |
+| OpenVPN / lz4 | Homebrew OpenVPN 2.7.8_1 and lz4 1.11.0 |
+| Other environments | Intel, other macOS versions, and OpenVPN 2.6 remain unverified |
+
+The minimum versions above describe the intended compatibility baseline. Stable support claims must stay within published validation evidence; installation outside the validated configuration needs independent testing.
 
 ## Install
 

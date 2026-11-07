@@ -1,3 +1,11 @@
+# vpn-pin 0.2.0 (unreleased preparation)
+
+- Prepare stable-release documentation, a tested-configuration matrix, and an explicit qualification record. The published version and `VERSION` remain `0.2.0-rc.5` until the remaining stable gates are satisfied.
+- Correct the stale security statement that no live validation had been performed. Document the bounded authenticated API/PF-cleanup evidence and the limits of periodic foreground supervision.
+- Non-sleep fault qualification is in progress; see [validation status](VALIDATION.md). Sleep/wake and physical upstream-network interruption are not covered by the current authorization or results.
+
+No stable tag, draft release, publication, tap update, or stable local installation is part of this preparation. The final version bump, exact-commit CI/review, and immutable release build remain gated on qualification and explicit publication authorization.
+
 # vpn-pin 0.2.0-rc.5
 
 - Add opt-in `watch --auto-reconnect` for one bounded restart after verified tunnel continuity loss. Recovery requires the original positively owned process, intact lifecycle logging, unchanged configuration, and conclusively absent target routes. It confirms the old PID has exited and accepts only the fresh session it creates; default watch remains conservative.
