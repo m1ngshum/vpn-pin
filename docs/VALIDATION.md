@@ -12,22 +12,28 @@ Status: preparation only; not approved for stable publication. Published/runtime
 
 Live configuration: macOS 27.3 on Apple Silicon, Homebrew Python 3.14.10, OpenVPN 2.7.8_1, lz4 1.11.0. Other platforms/versions remain unverified.
 
-## Non-sleep qualification in progress
+## Completed scoped non-sleep qualification (2026-11-08)
 
-The planned bounded checks use fresh profile sessions and a separate private profile file. Original client configuration contents and credentials are not copied into public artifacts.
+The bounded checks used fresh profile sessions and a separate private profile file against installed rc.5, with no product runtime changes or simulated route operations. A private observer recorded only the exact session returned by the installed recovery startup function so cleanup could remain bound to that session. Original client configuration contents and credentials were not copied into public artifacts.
 
 | Check | Status |
 | --- | --- |
-| Actual scoped DNS answer change and watcher refresh | Pending |
-| Actual NXDOMAIN during refresh/watch preserves owned routes | Pending |
-| Existing foreign host-route conflict remains untouched | Pending |
-| Ctrl-C stops watch while retaining the healthy owned tunnel | Pending |
-| Default watch refuses a controlled profile lifecycle replacement | Pending |
-| One fresh owned automatic restart after eligible profile lifecycle loss | Pending |
-| PF foreground Ctrl-C/SIGTERM revoke rules/states and retain healthy tunnel | Pending |
-| Active PF mode refuses refresh, reconnect, and automatic watch | Pending |
-| Authenticated API access after controlled recovery on three profiles | Pending |
-| Fixture, PF, route, process, and profile baseline restoration | Pending |
+| Actual scoped DNS answer change and watcher refresh | Passed |
+| Actual NXDOMAIN during refresh/watch preserves owned routes | Passed |
+| Existing foreign host-route conflict remains untouched | Passed |
+| Ctrl-C stops watch while retaining the healthy owned tunnel | Passed |
+| Default watch refuses a controlled profile lifecycle replacement | Passed |
+| One fresh owned automatic restart after eligible profile lifecycle loss | Passed |
+| PF foreground Ctrl-C/SIGTERM revoke rules/states and retain healthy tunnel | Passed |
+| Active PF mode refuses refresh, reconnect, and automatic watch | Passed |
+| Authenticated API access after controlled recovery on three profiles | Passed |
+| Fixture, PF, route, process, and profile baseline restoration | Passed |
+
+The DNS fixture used an exclusively owned resolver entry for a unique test-only domain and a loopback responder. Actual product lookups and live watcher-owned host routes switched between two documentation addresses; an actual NXDOMAIN response preserved the existing pins. The entry was removed, and the original resolver-directory manifest was restored. Default resolver settings were not changed and no global cache flush was performed. The conflict check used the preexisting loopback host route and verified that it remained unchanged.
+
+DNS/conflict/default-watch and PF Ctrl-C/SIGTERM checks exercised one profile. Fresh automatic recovery, PF mutation refusals, authenticated identity and namespace reads, certificate-verified TLS, and final cleanup exercised all three profiles. Each automatic watcher created exactly one fresh owned session; Ctrl-C then stopped watching while leaving that healthy session intact. All six API addresses passed certificate verification after recovery.
+
+All final PF supervisors exited `0`; interruption checks exited `130` as expected, and default watch exited on continuity loss. API clients closed, owned PF rules/states and tunnels/routes were removed, earlier closed test anchors remained empty, and an independent cleanup retry passed. Default routing, root PF policy, original private profile bytes/mode, and the OpenVPN process baseline were preserved. A separate final process scan found no test helpers or VPN processes remaining. No product-code fix was needed during this run.
 
 A controlled OpenVPN SIGHUP is a profile lifecycle-reset test. It is not evidence of physical network interruption or sleep/wake recovery. Automatic restart is eligible only with the original positively owned process, intact logging, unchanged configuration, and conclusively absent target routes. Guard refusal must not be turned into success by manually pruning routes or adopting another session.
 

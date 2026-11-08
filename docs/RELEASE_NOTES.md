@@ -2,7 +2,7 @@
 
 - Prepare stable-release documentation, a tested-configuration matrix, and an explicit qualification record. The published version and `VERSION` remain `0.2.0-rc.5` until the remaining stable gates are satisfied.
 - Correct the stale security statement that no live validation had been performed. Document the bounded authenticated API/PF-cleanup evidence and the limits of periodic foreground supervision.
-- Non-sleep fault qualification is in progress; see [validation status](VALIDATION.md). Sleep/wake and physical upstream-network interruption are not covered by the current authorization or results.
+- Scoped non-sleep qualification passed on installed rc.5: actual private-domain DNS rotation and NXDOMAIN handling, foreign-route conflict refusal, watcher interruption, conservative lifecycle refusal, and exactly one fresh automatic restart on each of three profiles. PF interruption cleanup and mutation guards passed; all three profiles passed authenticated API reads and certificate-verified TLS after recovery, followed by complete fixture/session cleanup and preserved baselines. See [validation status](VALIDATION.md) for scope. Sleep/wake, physical upstream-network interruption, and unclean-exit recovery remain unverified.
 
 No stable tag, draft release, publication, tap update, or stable local installation is part of this preparation. The final version bump, exact-commit CI/review, and immutable release build remain gated on qualification and explicit publication authorization.
 
