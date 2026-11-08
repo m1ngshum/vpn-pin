@@ -14,7 +14,7 @@ Live configuration: macOS 27.3 on Apple Silicon, Homebrew Python 3.14.10, OpenVP
 
 ## Completed scoped non-sleep qualification (2026-11-08)
 
-The bounded checks used fresh profile sessions and a separate private profile file against installed rc.5, with no product runtime changes or simulated route operations. A private observer recorded only the exact session returned by the installed recovery startup function so cleanup could remain bound to that session. Original client configuration contents and credentials were not copied into public artifacts.
+The bounded checks used fresh profile sessions and a separate private profile file against installed rc.5, with unchanged installed product files and no simulated route operations. A private observer recorded only the exact session returned by the installed recovery startup function so cleanup could remain bound to that session. Original client configuration contents and credentials were not copied into public artifacts.
 
 | Check | Status |
 | --- | --- |
