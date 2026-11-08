@@ -55,14 +55,18 @@ All nine authenticated profile-rounds passed; each round also verified TLS at si
 
 The raw recursive PF inventory differs by nine new, empty, exactly run-owned anchor containers. The trial conservatively retained `restored=false` for that inventory difference. A separate read-only verifier removed only those exact empty blocks from the captured comparison and established byte-for-byte equality with the original recursive rules; it did not mutate PF. Empty containers carry no permissions. Prior closed-journal transitions were checked during execution; saved permission snapshots are pre-cleanup records, not independent retained copies of every closed journal.
 
-An earlier attempt stopped at a test-observer race while fresh startup state preceded its receipt. Its owned resources were cleaned, but its root PF hash changed before any API-PF grant; the actor remains unproven. The observer was fixed to publish receipts atomically and inspect them under the startup lock, with 12 fabricated safety/race checks and Astra review before the corrected trial. The corrected trial preserved the complete foreign policy. These results do not explain or erase the earlier policy-change observation. No product-code fix was required.
+An earlier attempt stopped at a test-observer race while fresh startup state preceded its receipt. Its owned resources were cleaned, but it detected a root PF printed-output hash mismatch before any API-PF grant. The observer was fixed to publish receipts atomically and inspect them under the startup lock, with 12 fabricated safety/race checks and Astra review before the corrected trial. The corrected trial preserved the complete foreign policy. No product-code fix was required.
+
+Read-only investigation of the earlier mismatch found the same starting hash in four prior successful runs. However, the first attempt retained only that starting hash and a failed equality check: neither the before/after rule text nor the final hash was saved. A later baseline cannot stand in for that missing final snapshot. The difference therefore cannot be classified as formatting, ordering, changed predicates, or a security-policy change. Available time-bounded system/primary-VPN logs identify neither a PF writer nor an active upstream-VPN reconnect. The reached vpn-pin paths contain no root-policy write, and no API-PF grant ran; trusted external OpenVPN hooks or another process were not ruled out.
+
+The later harness fixes this evidence gap prospectively by capturing ordered root and recursive rules plus PF enabled status at baseline, after physical restoration, before PF grants, and after cleanup. Runtime hash, ownership and cleanup safeguards remain unchanged. The historical mismatch and its cause remain unresolved; the successful corrected trial does not erase that observation.
 
 The crash checks qualify explicit operator recovery in these separate fault scenarios, not unattended crash recovery or combined PF-supervisor/tunnel ownership loss. No final-runtime sleep/wake test was performed.
 
 ## Remaining stable gates
 
 - Final-runtime sleep/wake qualification on a disposable macOS test system, including authenticated access and complete cleanup. Sleep/wake remains outside the current task's authorization.
-- Resolve or explicitly assess the earlier unexplained root-PF policy change before stable approval; the successful corrected trial does not establish its cause.
+- Explicitly assess the unresolved historical root-PF output mismatch and missing snapshots before stable approval. Investigation found no confirmed product defect or demonstrated policy weakening, but could not identify the original difference or writer.
 - Review any fault-test findings and the final stable support/security documentation.
 - After qualification: final `0.2.0` version/notes commit, exact-commit review and green CI, then separately authorized immutable publication and verified Homebrew installation/upgrade.
 
