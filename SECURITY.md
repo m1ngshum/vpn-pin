@@ -1,6 +1,6 @@
 # Security
 
-The published version is a prerelease; stable 0.2.0 is in preparation. Bounded live macOS/OpenVPN checks have validated selected routing, authenticated API access, and normal API-only PF cleanup on three profiles. This does not establish general platform, sleep/wake, or crash-recovery compatibility. See [validation status](docs/VALIDATION.md). Security fixes target the current default branch.
+The published version is a prerelease; stable 0.2.0 is in preparation. Bounded live macOS/OpenVPN checks have validated selected routing, physical upstream-loss recovery, authenticated API access, and normal and explicit post-crash API-only PF cleanup on three profiles. This does not establish general platform, sleep/wake, unattended crash-recovery, or combined-fault compatibility. See [validation status](docs/VALIDATION.md), including an earlier unexplained root-policy change. Security fixes target the current default branch.
 
 Report vulnerabilities privately using [GitHub private vulnerability reporting](https://github.com/m1ngshum/vpn-pin/security/advisories/new). Do not put credentials, private client configurations, certificates, infrastructure addresses, personal paths, or unredacted diagnostics in public issues.
 
