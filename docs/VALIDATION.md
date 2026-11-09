@@ -1,6 +1,14 @@
 # Stable 0.2.0 qualification
 
-Status: preparation only; not approved for stable publication. Published/runtime baseline: `v0.2.0-rc.5`, source `417760bb8a8b85d732b3158522eac4b9f48ed839`.
+Status: awake-only 0.2.0 candidate preparation; not approved for merge or publication. Checkout `VERSION` is `0.2.0`; the published and installed live-validation baseline remains `v0.2.0-rc.5`, source `417760bb8a8b85d732b3158522eac4b9f48ed839`. Candidate runtime changes add support notices only; routing, process ownership, PF journals and cleanup logic are unchanged.
+
+## Adopted support scope (2026-11-09)
+
+The maintainer adopted awake, operator-managed sessions on the validated configuration as the 0.2.0 stable support contract. Supported evidence covers selected host routing, DNS refresh, eligible awake network-interruption recovery without active PF grants, and explicitly supervised API PF access/cleanup. Running any tunnel or PF exception across sleep, including sleep/wake recovery, is unsupported. Unattended and combined-fault recovery remain outside support.
+
+Operators must stop clients/watchers and complete managed down with verified cleanup before sleep; after waking from a clean shutdown they establish fresh sessions and verify TLS/authentication. Unexpected sleep or ambiguous cleanup requires inspection, not unconditional reconnect or journal deletion. PF supervision cannot execute while asleep, and permissions/journals may remain.
+
+Sleep qualification is not a gate for this explicitly narrower support scope. The failed attempt below remains a failed attempt; this support decision neither turns it into a pass nor extends validation beyond the recorded environment. Further sleep tests remain stopped unless separately authorized.
 
 ## Completed baseline
 
@@ -73,11 +81,13 @@ The original sleep-disable setting was restored, the owned wake event was absent
 
 A separate non-sleep follow-up then established fresh sessions on all three profiles and passed authenticated identity, bounded namespace reads and certificate-verified TLS at six API addresses. Owned permissions/states, tunnels, routes and helpers were removed; baseline checks and an independent cleanup retry passed. No sleep request, wake scheduling or power-setting change ran in that follow-up. It verifies fresh-session access after the observed wake, not sleep continuity or successful sleep recovery.
 
-## Remaining stable gates
+## Candidate checks and publication gates
 
-- Final-runtime sleep/wake qualification on a disposable macOS test system, including authenticated access and complete cleanup. Further sleep tests are stopped at the maintainer's request; another attempt requires renewed authorization.
-- Review any fault-test findings and the final stable support/security documentation.
-- After qualification: final `0.2.0` version/notes commit, exact-commit review and green CI, then separately authorized immutable publication and verified Homebrew installation/upgrade.
+The awake-only candidate passed 125 mocked tests on Python 3.9.6 and 3.14.10, plus shell syntax and diff checks. Four added tests cover configuration/privilege-free help and stderr notices before tunnel startup, watcher refresh and PF grants. No new live VPN or power test was run for this notice/version change. Record the final exact-commit CI, review and local artifact/isolated-installation results in the preparation PR before any merge.
+
+- Review the awake-only documentation, agent skills, CLI disclosures and candidate changes; require exact-commit checks and Astra review.
+- Build and verify the committed 0.2.0 candidate archive, formula, checksums and isolated installation. Existing rc.5 live evidence applies to unchanged core behavior, not a new live validation claim for this candidate.
+- After separately authorized merge, require green CI and exact-source immutable artifact verification before separately authorized publication and verified Homebrew installation/upgrade. No tag, release draft, publication or global installation is authorized by candidate preparation.
 
 ## Security limits
 

@@ -24,6 +24,9 @@ from urllib.parse import urlsplit
 import vpn_pin_pf as api_pf
 
 VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
+AWAKE_ONLY = ("Awake-only support: tunnels and PF exceptions across sleep, including sleep/wake recovery, "
+              "are unsupported. Stop clients and watchers, complete 'vpn-pin down PROFILE' and verify cleanup "
+              "before sleep. After unexpected sleep or failed cleanup, inspect retained state; do not force reconnect.")
 
 
 class Error(Exception):
@@ -479,6 +482,7 @@ def wrapper(directory, profile):
 
 def up(directory, profile, desired=None):
     api_pf.guard(directory, profile.name)
+    print("Warning: " + AWAKE_ONLY, file=sys.stderr, flush=True)
     state = read_state(directory, profile.name)
     if state and desired is not None:
         raise Error("runtime state appeared before fresh startup; inspect before recovery")
@@ -746,6 +750,7 @@ def watch(config, name, interval, auto_reconnect=False):
             raise Error("watch requires an initialized, owned tunnel; run up explicitly after inspection")
         require_lifetime(directory, name, initial)
         expected = identity(initial)
+    print("Warning: " + AWAKE_ONLY, file=sys.stderr, flush=True)
     print("Watching " + name + "; Ctrl-C stops watching and leaves the tunnel running", flush=True)
     while True:
         profiles = load_profiles(config)
@@ -816,6 +821,7 @@ def supervise_api_pf(config, name):
         profile = load_profiles(config)[name]
         stamp = client_identity(profile)
         desired = resolve_ips(profile)
+        print("Warning: " + AWAKE_ONLY, file=sys.stderr, flush=True)
         with state_directory(human().pw_uid) as directory:
             state = read_state(directory, name)
             if not state or state["utun"] is None:
@@ -871,18 +877,18 @@ def supervise_api_pf(config, name):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="vpn-pin", description=__doc__)
+    parser = argparse.ArgumentParser(prog="vpn-pin", description=__doc__, epilog=AWAKE_ONLY)
     parser.add_argument("--version", action="version", version="vpn-pin " + VERSION)
     parser.add_argument("--config", type=Path, default=Path(human().pw_dir) / ".config/vpn-pin/profiles.conf")
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("up", "down", "refresh", "reconnect", "status", "plan", "validate", "watch", "doctor", "kube", "api-pf"):
-        subparser = commands.add_parser(command)
+        subparser = commands.add_parser(command, epilog=AWAKE_ONLY if command in ("up", "reconnect", "watch", "api-pf") else None)
         subparser.add_argument("profile", nargs="?" if command in ("status", "doctor", "validate") else None)
         if command == "kube":
             subparser.add_argument("args", nargs=argparse.REMAINDER)
         if command == "watch":
             subparser.add_argument("--interval", type=float, default=30)
-            subparser.add_argument("--auto-reconnect", action="store_true", help="allow one checked restart after tunnel continuity loss")
+            subparser.add_argument("--auto-reconnect", action="store_true", help="allow one checked restart after awake-session continuity loss; sleep recovery unsupported")
         if command == "doctor":
             subparser.add_argument("--port", type=int)
         if command == "validate":

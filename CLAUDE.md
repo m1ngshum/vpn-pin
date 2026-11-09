@@ -19,6 +19,8 @@ vpn-pin is a macOS CLI for independent OpenVPN tunnels and selected IPv4 host ro
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
+The 0.2.0 support scope is awake, operator-managed sessions only. Running tunnels or PF grants across sleep, including sleep/wake recovery, is unsupported. Before sleep, stop clients/watchers and complete managed down with verified cleanup; after waking from a clean shutdown, start fresh and verify TLS/authentication. Unexpected sleep or ambiguous cleanup requires inspection, never forced reconnect or journal deletion. Keep CLI notices, README, security/release docs and repository skills consistent; retain failed sleep evidence. A candidate version bump is not release authorization.
+
 Keep edits scoped. Preserve resolution-before-mutation, explicit route conflicts, rollback, private runtime state, and process identity checks. Never use live routes, sudo, private configurations, or VPN tunnels in tests. Do not copy private endpoint addresses or credentials into fixtures, docs, or reports. See README for current live-validation limits.
 
 Plan and refresh share one route planner. Watch releases its lock for DNS and normal polling/backoff, re-reads ownership every tick, preserves routes on lookup failure, and stops on ambiguity. Opt-in automatic recovery holds the lock across its bounded stop/start transition, requires intact log history and absent routes, and binds only the fresh session it creates. Profile edits preserve existing content and permissions, reject unsafe files, and detect concurrent changes. Release assets must come from an exact commit, never uncommitted files; draft creation does not authorize publication.

@@ -13,9 +13,9 @@ Maintainers should run these commands from a complete Git checkout, rather than 
 
 The builder reads committed files rather than the working tree. Repeating a build of the same commit produces identical archives and checksums. Assets are `vpn-pin-VERSION.tar.gz`, `vpn-pin.rb`, `RELEASE.json` (commit and archive checksum), and `SHA256SUMS`. The archive contains tracked runtime files and documentation only; untracked configs, reports, Git metadata, and build outputs are excluded. The formula's URL and SHA-256 bind it to that exact release asset.
 
-Before a stable release, validate a live tunnel on a disposable macOS test system: establish only the selected host routes, confirm the upstream default route stays unchanged, test sleep/network recovery, DNS changes/failures, conflicting routes, Ctrl-C, and complete cleanup. Record macOS/OpenVPN versions and results. Mocked CI does not establish live compatibility. If this check is still pending, publish only as an explicitly labeled prerelease.
+Before a stable release, define and qualify its declared support scope. For 0.2.0 the adopted scope is awake, operator-managed sessions on the validated configuration: selected host routes, unchanged upstream default routing, DNS changes/failures, route conflicts, eligible awake network recovery without active PF grants, foreground PF access/cleanup, interruption handling and complete owned cleanup. Record environment versions and evidence. Mocked CI does not establish live compatibility. Sleep/wake and carrying active tunnels/PF grants across sleep are explicitly unsupported, not mandatory qualification gates for this scope; preserve failed sleep evidence and require renewed authorization before any additional sleep test. If live compatibility for the declared supported scope is unverified, use an explicitly labeled prerelease.
 
-Current stable preparation is tracked in [validation status](VALIDATION.md). Keep `VERSION` on the published prerelease while mandatory live qualification remains open. Do not create a stable tag or dispatch the release workflow for preparation work. After qualification, prepare the final `0.2.0` version/notes commit, obtain exact-commit review and green CI, and perform only the separately authorized publication stages.
+Current candidate preparation is tracked in [validation status](VALIDATION.md). The checkout prepares `VERSION=0.2.0`, while published and installed versions remain rc.5. Review consistent awake-only notices in README, security/release documentation, repository skills and CLI help/startup before approving the candidate. Verify the exact version/notes commit, tests, CI, reproducible assets and isolated installation; a prepared version number does not authorize a tag, release workflow, merge or publication. After separately authorized merge, repeat exact-source build/checks for the chosen main commit and perform only the separately authorized publication stages.
 
 ## Create a draft after merge
 
@@ -24,7 +24,7 @@ The **Draft release** workflow is manual and restricted to `main`. It reruns tes
 ```sh
 gh workflow run release.yml --repo m1ngshum/vpn-pin --ref main
 gh run list --repo m1ngshum/vpn-pin --workflow release.yml
-gh release view v0.2.0-rc.5 --repo m1ngshum/vpn-pin
+gh release view v0.2.0 --repo m1ngshum/vpn-pin
 ```
 
 Before publishing, enable **release immutability** in the repository's General settings. Review the draft's commit, notes, and assets, and verify that the remote version tag still points to `RELEASE.json`'s commit; select prerelease status when live compatibility remains unverified. Publish manually after approval. Immutable releases lock assets and tags after publication, so attach everything to the draft first. Never move an existing version tag or replace its archive; use a new version.
@@ -32,8 +32,8 @@ Before publishing, enable **release immutability** in the repository's General s
 Download assets and verify checksums with `shasum -a 256 -c SHA256SUMS`. With immutable releases enabled, GitHub CLI can also verify release provenance and assets:
 
 ```sh
-gh release verify v0.2.0-rc.5 --repo m1ngshum/vpn-pin
-gh release verify-asset v0.2.0-rc.5 vpn-pin-0.2.0-rc.5.tar.gz --repo m1ngshum/vpn-pin
+gh release verify v0.2.0 --repo m1ngshum/vpn-pin
+gh release verify-asset v0.2.0 vpn-pin-0.2.0.tar.gz --repo m1ngshum/vpn-pin
 ```
 
 See [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) and [verification](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/verify-release-integrity).
