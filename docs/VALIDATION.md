@@ -59,14 +59,23 @@ An earlier attempt stopped at a test-observer race while fresh startup state pre
 
 Read-only investigation of the earlier mismatch found the same starting hash in four prior successful runs. However, the first attempt retained only that starting hash and a failed equality check: neither the before/after rule text nor the final hash was saved. A later baseline cannot stand in for that missing final snapshot. The difference therefore cannot be classified as formatting, ordering, changed predicates, or a security-policy change. Available time-bounded system/primary-VPN logs identify neither a PF writer nor an active upstream-VPN reconnect. The reached vpn-pin paths contain no root-policy write, and no API-PF grant ran; trusted external OpenVPN hooks or another process were not ruled out.
 
-The later harness fixes this evidence gap prospectively by capturing ordered root and recursive rules plus PF enabled status at baseline, after physical restoration, before PF grants, and after cleanup. Runtime hash, ownership and cleanup safeguards remain unchanged. The historical mismatch and its cause remain unresolved; the successful corrected trial does not erase that observation.
+The later harness fixes this evidence gap prospectively by capturing ordered root and recursive rules plus PF enabled status at baseline, after physical restoration, before PF grants, and after cleanup. Runtime hash, ownership and cleanup safeguards remain unchanged. The historical mismatch and its cause remain unresolved; the successful corrected trial does not erase that observation. On 2026-11-08 the maintainer accepted this documented historical evidence gap for stable preparation; this acceptance does not cover new policy differences.
 
-The crash checks qualify explicit operator recovery in these separate fault scenarios, not unattended crash recovery or combined PF-supervisor/tunnel ownership loss. No final-runtime sleep/wake test was performed.
+The crash checks qualify explicit operator recovery in these separate fault scenarios, not unattended crash recovery or combined PF-supervisor/tunnel ownership loss. No sleep/wake request was made during that trial.
+
+## Final-runtime sleep attempt (2026-11-09)
+
+Pre-sleep authenticated identity, bounded namespace reads and certificate-verified TLS passed on all three profiles against installed rc.5. Those PF grants were closed before the sleep request, and three automatic recovery watchers were attached. A uniquely owned one-shot wake event and independent restoration guard supervised temporary sleep enablement; other power settings were not changed.
+
+The actual system log showed four seconds of software-requested sleep, a 45-second DarkWake, then 35 seconds of maintenance sleep before full wake. Neither sleep interval met the required 75 uninterrupted seconds. The trial rejected the cycle, performed no post-wake authentication round, and does not qualify sleep recovery. The maintainer stopped further sleep tests; a reviewed longer retry was not executed.
+
+The original sleep-disable setting was restored, the owned wake event was absent, and the guard exited successfully. API clients, watchers, owned PF rules/states, tunnels and routes were cleaned; an independent cleanup retry passed. Default routing, private profiles, resolver configuration and process baseline were preserved. Foreign PF rules matched after excluding only three new empty owned anchor containers. Unrelated scheduled wake entries changed, so the raw run retained `restored=false`; those entries were not repaired or cancelled. No product-code defect was established.
+
+A separate non-sleep follow-up then established fresh sessions on all three profiles and passed authenticated identity, bounded namespace reads and certificate-verified TLS at six API addresses. Owned permissions/states, tunnels, routes and helpers were removed; baseline checks and an independent cleanup retry passed. No sleep request, wake scheduling or power-setting change ran in that follow-up. It verifies fresh-session access after the observed wake, not sleep continuity or successful sleep recovery.
 
 ## Remaining stable gates
 
-- Final-runtime sleep/wake qualification on a disposable macOS test system, including authenticated access and complete cleanup. Sleep/wake remains outside the current task's authorization.
-- Explicitly assess the unresolved historical root-PF output mismatch and missing snapshots before stable approval. Investigation found no confirmed product defect or demonstrated policy weakening, but could not identify the original difference or writer.
+- Final-runtime sleep/wake qualification on a disposable macOS test system, including authenticated access and complete cleanup. Further sleep tests are stopped at the maintainer's request; another attempt requires renewed authorization.
 - Review any fault-test findings and the final stable support/security documentation.
 - After qualification: final `0.2.0` version/notes commit, exact-commit review and green CI, then separately authorized immutable publication and verified Homebrew installation/upgrade.
 
