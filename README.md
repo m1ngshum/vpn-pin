@@ -2,13 +2,13 @@
 
 Run separate OpenVPN tunnels on macOS and route selected IPv4 hosts through them. Keep your upstream connection, including an existing VPN, for other traffic. Profiles can target any hostname or IPv4 address; Kubernetes and aws-vault are optional.
 
-The 0.2.0 candidate supports awake, operator-managed sessions on the validated configuration below. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
+The 0.2.0 release supports awake, operator-managed sessions on the validated configuration below. Automated tests use mocked routes and processes; bounded live checks passed for three existing profiles. See [release notes](docs/RELEASE_NOTES.md) for results and remaining limits.
 
 **Running tunnels or PF exceptions across sleep, including sleep/wake recovery, is unsupported.** Before sleep, stop clients and watchers, complete managed `down` for every active profile, and verify cleanup. Unexpected sleep can leave permissions or journals requiring inspection; a stable version number does not provide unattended recovery. See [awake-session operation](#awake-session-operation).
 
-## Stable-release preparation
+## Release scope and evidence
 
-This checkout prepares `VERSION=0.2.0`; stable `0.2.0` is not published. The published and installed baseline remains `0.2.0-rc.5`. The candidate adds support notices to that validated runtime without changing ownership or cleanup logic. See [validation status](docs/VALIDATION.md) for the adopted awake-only scope, historical evidence and remaining review/artifact/publication gates.
+The 0.2.0 release adopts the awake-only scope below and adds support notices to the validated rc.5 runtime without changing ownership or cleanup logic. See [validation status](docs/VALIDATION.md) for the historical evidence and verification requirements. Check [GitHub Releases](https://github.com/m1ngshum/vpn-pin/releases) for published versions and assets; a checkout version string alone does not prove publication.
 
 ## Requirements
 

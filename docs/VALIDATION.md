@@ -1,6 +1,6 @@
 # Stable 0.2.0 qualification
 
-Status: awake-only 0.2.0 candidate preparation; not approved for merge or publication. Checkout `VERSION` is `0.2.0`; the published and installed live-validation baseline remains `v0.2.0-rc.5`, source `417760bb8a8b85d732b3158522eac4b9f48ed839`. Candidate runtime changes add support notices only; routing, process ownership, PF journals and cleanup logic are unchanged.
+Support status: 0.2.0 is scoped to awake, operator-managed sessions. The live-validation baseline was `v0.2.0-rc.5`, source `417760bb8a8b85d732b3158522eac4b9f48ed839`. Runtime changes for 0.2.0 add support notices only; routing, process ownership, PF journals and cleanup logic are unchanged. Exact-source CI, review and artifact/install verification are recorded in the preparation PR and release receipts; live evidence and publication verification remain distinct.
 
 ## Adopted support scope (2026-11-09)
 
