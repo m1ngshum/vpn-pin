@@ -178,3 +178,7 @@ For private vulnerability reports, see [SECURITY.md](SECURITY.md).
 ## AI skills
 
 Agents working from a source checkout can use [vpn-pin-operate](.agents/skills/vpn-pin-operate/SKILL.md) for setup/diagnosis and [vpn-pin-release](.agents/skills/vpn-pin-release/SKILL.md) for release and Homebrew maintenance. These small repository skills reuse the existing CLI and release scripts. They do not install an AI runtime or grant permission to change a VPN; the current user request determines the authorized actions.
+
+## Contact
+
+For general enquiries, contact [hello@m1ngshum.com](mailto:hello@m1ngshum.com).
