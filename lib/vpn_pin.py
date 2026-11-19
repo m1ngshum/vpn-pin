@@ -842,7 +842,7 @@ def supervise_api_pf(config, name):
             finally:
                 # Deliver a pending stop only after the caller owns the returned permission.
                 signal.pthread_sigmask(signal.SIG_SETMASK, grant_mask)
-        print("Supervising API TCP 443 PF exceptions for " + name + "; Ctrl-C revokes them and leaves the tunnel running", flush=True)
+        print("Supervising API TCP 443 PF exceptions for " + name + "; Ctrl-C removes owned rules and leaves the tunnel running. PF states may remain", flush=True)
         while True:
             with state_directory(human().pw_uid) as directory:
                 live = api_pf.current(directory, name, permission)

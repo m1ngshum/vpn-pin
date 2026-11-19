@@ -29,7 +29,6 @@ class PFBackend:
         self.states = ''
         self.events = []
         self.fail_load = None
-        self.fail_kill = False
         self.fail_flush = False
         self.state = {'pid': 123, 'started': 'fixture start', 'binary': '/fixture/openvpn',
                       'utun': 'utun42', 'ifindex': 42, 'log_guard': {'size': 1},
@@ -54,7 +53,6 @@ class PFBackend:
             anchor = args[args.index('-a') + 1]
             self.events.append('load')
             self.anchors[anchor] = pf.normalize(text)
-            self.states = 'fixture active states'
             if self.fail_load:
                 raise self.fail_load
             return ''
@@ -68,13 +66,8 @@ class PFBackend:
                     raise pf.Error('flush failed')
                 self.anchors[anchor] = ''
                 return ''
-        if '-k' in args:
-            self.events.append(('kill', args[1], args[3], args[5]))
-            if self.fail_kill:
-                raise pf.Error('kill failed')
-            self.states = ''
-            return ''
         if args[-2:] == ('-s', 'states'):
+            self.events.append('read states')
             return self.states
         raise AssertionError(args)
 
@@ -103,9 +96,7 @@ class Permissions(PFBackend, unittest.TestCase):
                 self.assertIn('keep state (if-bound)', line)
             pf.revoke(self.directory, 'work', record, self.verify)
         self.assertEqual(phases, ['prepared', 'active', 'rules-removed', 'closed'])
-        self.assertLess(self.events.index('flush'), next(i for i, x in enumerate(self.events) if isinstance(x, tuple)))
-        self.assertEqual([x for x in self.events if isinstance(x, tuple)],
-                         [('kill', 'utun42', '192.0.2.10', ip) for ip in self.state['routes']])
+        self.assertEqual(self.events[-2:], ['flush', 'read states'])
         self.assertEqual(pf.load(self.directory, 'work')['phase'], 'closed')
         self.healthy = False  # Closed receipt must not inspect/adopt a later interface.
         pf.revoke(self.directory, 'work', record, self.verify)
@@ -142,22 +133,16 @@ class Permissions(PFBackend, unittest.TestCase):
         with self.assertRaises(pf.Error):
             pf.revoke(self.directory, 'work', record, self.verify)
         self.assertNotIn('flush', self.events)
-        self.assertFalse(any(isinstance(x, tuple) for x in self.events))
 
     def test_owner_loss_revokes_rules_but_never_uses_replacement_interface(self):
         record = self.enable();self.healthy=False
         with self.assertRaises(vpn.Error):
             pf.revoke(self.directory, 'work', record, self.verify)
         self.assertEqual(self.anchors[record['anchor']], '')
-        self.assertFalse(any(isinstance(x, tuple) for x in self.events))
         self.assertEqual(pf.load(self.directory, 'work')['phase'], 'rules-removed')
 
-    def test_partial_state_cleanup_and_failed_close_save_retain_journal(self):
-        record=self.enable();self.fail_kill=True
-        with self.assertRaises(pf.Error):
-            pf.revoke(self.directory, 'work', record, self.verify)
-        self.assertEqual(pf.load(self.directory, 'work')['phase'], 'rules-removed')
-        self.fail_kill=False
+    def test_failed_close_save_retains_journal(self):
+        record = self.enable()
         original=pf.store
         def store(d,n,r):
             if r['phase']=='closed':raise OSError('close save failed')
@@ -216,6 +201,36 @@ class Permissions(PFBackend, unittest.TestCase):
         self.assertNotIn('load', self.events)
         self.assertEqual(pf.load(self.directory, 'work')['phase'], 'closed')
 
+    def test_states_appearing_during_failed_reservation_are_left_alone(self):
+        def fail(record):
+            self.states = 'foreign state matching API address pair'
+            raise OSError('runtime save failed')
+
+        with self.assertRaisesRegex(pf.Error, 'PF states remain') as failure:
+            pf.enable(self.directory, 'work', self.state, self.verify, fail)
+        self.assertIsInstance(failure.exception.__context__, OSError)
+        self.assertNotIn('load', self.events)
+        self.assertNotIn('flush', self.events)
+        self.assertEqual(self.states, 'foreign state matching API address pair')
+        self.assertEqual(pf.load(self.directory, 'work')['phase'], 'rules-removed')
+
+    def test_states_appearing_during_uncertain_load_are_left_alone(self):
+        original = self.backend
+
+        def uncertain(*args, text=None):
+            result = original(*args, text=text)
+            if 'load' in self.events and '-f' in args:
+                self.states = 'ambiguous state matching API address pair'
+                raise pf.Error('load timed out')
+            return result
+
+        with patch.object(pf, 'pf', side_effect=uncertain):
+            with self.assertRaisesRegex(pf.Error, 'PF states remain'):
+                self.enable()
+        self.assertTrue(all(not rules for rules in self.anchors.values()))
+        self.assertEqual(self.states, 'ambiguous state matching API address pair')
+        self.assertEqual(pf.load(self.directory, 'work')['phase'], 'rules-removed')
+
     def test_superseded_token_cannot_mutate_replacement(self):
         old=self.enable();pf.revoke(self.directory,'work',old,self.verify)
         new=self.enable();self.events.clear()
@@ -241,6 +256,24 @@ class Permissions(PFBackend, unittest.TestCase):
             with self.assertRaises(pf.Error):vpn.down(self.directory,'work')
             kill.assert_not_called();remove.assert_not_called()
         self.assertEqual(pf.load(self.directory,'work')['token'],record['token'])
+
+    def test_down_retains_routes_and_tunnel_until_states_drain(self):
+        record = self.enable()
+        self.states = 'ambiguous state matching API address pair'
+        with (patch.object(vpn, 'read_state', return_value=self.state),
+              patch.object(vpn, 'require_pf_session'),
+              patch.object(vpn.os, 'kill') as kill,
+              patch.object(vpn, 'remove_route') as remove):
+            with self.assertRaisesRegex(pf.Error, 'PF states remain'):
+                vpn.down(self.directory, 'work')
+            kill.assert_not_called()
+            remove.assert_not_called()
+        self.assertEqual(self.anchors[record['anchor']], '')
+        self.assertEqual(self.states, 'ambiguous state matching API address pair')
+        self.assertEqual(pf.load(self.directory, 'work')['phase'], 'rules-removed')
+        self.states = ''
+        pf.revoke(self.directory, 'work', record, self.verify)
+        self.assertEqual(pf.load(self.directory, 'work')['phase'], 'closed')
 
     def test_absent_runtime_still_revokes_owned_anchor_then_retains_pending_journal(self):
         record=self.enable()
@@ -297,6 +330,17 @@ class Supervision(PFBackend, unittest.TestCase):
         self.assertEqual(pf.load(self.directory,'work')['phase'],'closed')
         self.assertEqual(self.runtime,self.state)
 
+    def test_foreground_interrupt_reports_residual_states(self):
+        def stop(*args):
+            self.states = 'ambiguous state matching API address pair'
+            raise KeyboardInterrupt()
+
+        with self.assertRaisesRegex(pf.Error, 'PF states remain'):
+            self.run_supervisor(stop)
+        self.assertEqual(self.states, 'ambiguous state matching API address pair')
+        self.assertTrue(all(not rules for rules in self.anchors.values()))
+        self.assertEqual(pf.load(self.directory, 'work')['phase'], 'rules-removed')
+
     def test_pending_real_stop_at_enable_return_is_revoked_after_assignment(self):
         original = pf.enable
         def enable(*args):
@@ -331,7 +375,6 @@ class Supervision(PFBackend, unittest.TestCase):
         with self.assertRaises(vpn.ContinuityError):self.run_supervisor(lost)
         self.assertTrue(all(not x for x in self.anchors.values()))
         self.assertEqual(pf.load(self.directory,'work')['phase'],'rules-removed')
-        self.assertFalse(any(isinstance(x,tuple) for x in self.events))
 
     def test_old_supervisor_never_revokes_replacement_permission(self):
         replacement=[]

@@ -1,3 +1,7 @@
+# vpn-pin 0.2.1
+
+- PF cleanup removes verified owned rules and requires an empty state table on the original interface before teardown. Residual states retain the tunnel and journal. Rule readback and flush require vpn-pin to be the exclusive writer to its child anchors. The rc.5 live checks below exercised the earlier cleanup behavior.
+
 # vpn-pin 0.2.0
 
 - Adopt an awake-only stable support contract for 0.2.0, based on the validated rc.5 runtime with added support notices and release metadata.
