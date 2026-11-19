@@ -1,6 +1,10 @@
+# 0.2.1 PF cleanup verification
+
+A live test on one profile held a TCP 443 connection while managed down removed its anchor rules. The original tunnel, routes and journal remained until the connection closed and PF state expired. A subsequent managed down completed. This trial covered TCP connectivity and cleanup. Authenticated API and sleep/wake tests were outside its scope.
+
 # Stable 0.2.0 qualification
 
-Support status: 0.2.0 is scoped to awake, operator-managed sessions. The live-validation baseline was `v0.2.0-rc.5`, source `417760bb8a8b85d732b3158522eac4b9f48ed839`. Runtime changes for 0.2.0 add support notices only; routing, process ownership, PF journals and cleanup logic are unchanged. Exact-source CI, review and artifact/install verification are recorded in the preparation PR and release receipts; live evidence and publication verification remain distinct.
+Support status: 0.2.0 is scoped to awake, operator-managed sessions. The live-validation baseline was `v0.2.0-rc.5`, source `417760bb8a8b85d732b3158522eac4b9f48ed839`. The original 0.2.0 preparation added support notices. The 0.2.1 PF cleanup change leaves states intact and requires an empty interface state table before teardown. The historical rc.5 live checks below exercised the earlier cleanup behavior. Exact-source CI, review and artifact/install verification are recorded in the preparation PR and release receipts; live evidence and publication verification remain distinct.
 
 ## Adopted support scope (2026-11-09)
 

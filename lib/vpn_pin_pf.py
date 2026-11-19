@@ -214,7 +214,7 @@ def enable(directory, name, state, verify, reserve):
     if record["anchor"].split("/")[-1] in children or anchor_rules(record):
         raise Error("PF anchor already exists; refusing takeover")
     if pf("-i", state["utun"], "-s", "states").strip():
-        raise Error("test/profile interface already has PF states; refusing address-pair cleanup ownership")
+        raise Error("profile interface already has PF states; refusing to apply permissions")
     normalized = normalize(pf("-n", "-v", "-o", "none", "-a", record["anchor"], "-f", "-", text=record["expected"] + "\n"))
     if normalized != record["expected"]:
         raise Error("PF normalization changed the proposed permission scope")
@@ -252,6 +252,7 @@ def revoke(directory, name, expected, verify):
         raise Error("PF anchor contents changed; refusing to flush foreign rules")
     if actual:
         current(directory, name, record)
+        # PF has no atomic compare-and-flush; this child anchor requires an exclusive writer.
         pf("-a", record["anchor"], "-F", "rules")
     if anchor_rules(record):
         raise Error("PF anchor could not be emptied; tunnel retained")
@@ -261,12 +262,9 @@ def revoke(directory, name, expected, verify):
     verify()  # Never use saved interface names after ownership/lifetime loss.
     if source_address(record["session"]) != record["source"]:
         raise Error("tunnel source address changed; inspect PF states before down")
-    for ip in record["session"]["routes"]:
-        current(directory, name, record)
-        verify()
-        pf("-i", record["session"]["utun"], "-k", record["source"], "-k", ip)
+    verify()
     if pf("-i", record["session"]["utun"], "-s", "states").strip():
-        raise Error("PF states remain on the owned interface; tunnel retained")
+        raise Error("PF states remain on the owned interface; tunnel and journal retained")
     verify()
     record["phase"] = "closed"
     record["states_verified"] = True
